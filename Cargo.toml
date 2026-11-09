@@ -1,0 +1,18 @@
+[package]
+name = "stdo"
+version = "0.0.1"
+edition = "2021"
+description = "⚡ Standard I/O Orchestrator — Zero-network Unix DAG workflow engine in Rust with an embedded Studio UI."
+license = "Apache-2.0"
+repository = "https://github.com/adiktiv-technologies/stdo"
+homepage = "https://adiktiv-technologies.github.io/stdo"
+readme = "README.md"
+keywords = ["workflow", "dag", "orchestrator", "cli", "unix"]
+categories = ["command-line-utilities", "development-tools"]
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
