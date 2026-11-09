@@ -1,2 +1,176 @@
-# stdo
-⚡ Standard I/O Orchestrator — Zero-network Unix DAG workflow engine in Rust with an embedded Studio UI.
+<div align="center">
+
+# ⚡ `stdo`
+
+**Standard I/O Orchestrator — Workflow-as-Code meets the Unix Philosophy.**
+
+A single ~3 MiB zero-network Rust binary that orchestrates your local CLI tools (`curl`, `ollama`, `rg`, `jq`, `sqlite3`, `dscr`) over pure `stdin` / `stdout` pipes — complete with an embedded offline Studio UI.
+
+[![Crates.io](https://img.shields.io/crates/v/stdo.svg)](https://crates.io/crates/stdo)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](https://github.com/adiktiv-technologies/stdo/blob/main/LICENSE)
+[![Network: 100% Offline](https://img.shields.io/badge/network-zero_outbound_calls-success.svg)](#architecture--core-concepts)
+[![Rust](https://img.shields.io/badge/edition-2021-orange.svg)](https://github.com/adiktiv-technologies/stdo/blob/main/Cargo.toml)
+
+[**Quickstart**](#quickstart) • [**What is a Unix DAG?**](#what-is-a-unix-dag) • [**Embedded Studio (`stdo serve`)**](#embedded-studio-stdo-serve) • [**Roadmap**](#roadmap)
+
+</div>
+
+## Why `stdo`?
+
+Modern AI, data, and automation orchestrators (like Dify, Airflow, or Langflow) suffer from severe infrastructure bloat: they demand multi-container Docker stacks, PostgreSQL, Redis, and lock your logic into fragile Python SDKs that break every month.
+
+**`stdo` (pronounced _"studio"_ or _"S-T-D-O"_) takes the radical Unix path:**
+
+1. **Zero HTTP Client Inside:** `stdo` contains no outbound network stack (`no reqwest`, `no openssl`). Need a REST API? Call `curl`. Need a local LLM? Call `ollama` or `llama-cli`. Need vector or relational queries? Call `sqlite3`.
+2. **True `stdin` / `stdout` Piping (No `ARG_MAX` Crashes):** Passing megabytes of JSON or RAG context through environment variables (`${OUTPUT}`) crashes the OS kernel (`ARG_MAX` limit) and invites shell-injection bugs. `stdo` streams data directly through process file descriptors (`fd 0` and `fd 1`).
+3. **Content-Addressable Cache (CAS):** Every step can be memoized by hashing `SHA-256(cmd + args + stdin)`. If inputs haven't changed, slow LLM inference or heavy data transformations return in `0 ms`.
+4. **Embedded Offline Studio (`stdo serve`):** Ships with a zero-CDN Web UI compiled directly into the Rust binary (`127.0.0.1:8080`) to visualize your execution graph, auto-generate input forms, and stream live `stdout` logs over local WebSockets.
+
+## What is a Unix DAG?
+
+At the heart of `stdo` is a **DAG (_Directed Acyclic Graph_)**:
+
+- **Directed:** Data flows in a clear, deterministic direction from upstream producer processes to downstream consumer processes.
+- **Acyclic:** The graph contains no infinite loops that could lock up unattended pipelines or CI/CD runners; every execution path is guaranteed to terminate.
+- **Graph:** Unlike a linear Bash pipe (`cmd1 | cmd2 | cmd3`), a DAG supports **parallel fan-out** (running 4 CLI tools simultaneously), **fan-in aggregation** (combining outputs from multiple tools into a single LLM prompt), and **conditional branching** (`switch` routing based on structured JSON output or exit codes).
+
+```text
+                  ┌──► [ Step B: rg (Static Scan) ] ──────┐
+[ Inputs / CLI ] ─┤                                       ├──► [ Step D: ollama / dscr ] ──► [ Switch ]
+                  └──► [ Step C: sqlite3 (Fetch Rules) ] ─┘                                    ├─► PASS
+                                                                                               └─► BLOCK
+```
+
+Before running a single command, `stdo` topologically sorts your DAG, validates that no circular dependencies exist, and performs a **Doctor Check** to confirm every required binary exists in your `$PATH`.
+
+## Quickstart
+
+### 1. Install
+
+```bash
+# Via Cargo (Rust 1.75+)
+cargo install stdo
+
+# Or via pre-compiled static binary (Linux / macOS — x86_64 & aarch64)
+curl -fsSL [https://adiktiv-technologies.github.io/stdo/install.sh](https://adiktiv-technologies.github.io/stdo/install.sh) | sh
+```
+
+### 2. Define your workflow (`stdo.yaml`)
+
+`stdo` supports two complementary data-passing modes between nodes:
+
+- **Buffered Templating (`stdin: "{{ steps.x.stdout }}"`):** Waits for step `x` to complete, then injects its output into a template (ideal for assembling multi-source prompts).
+- **Native OS Stream (`pipe_from: step_x`):** Wires the OS `stdout` pipe of `step_x` directly into the `stdin` of the current step for zero-copy, line-by-line JSONL streaming.
+
+```yaml
+version: "1.0"
+name: "offline-code-triage"
+description: "100% local security audit orchestrating ripgrep, SQLite, and Ollama"
+
+inputs:
+  target_dir:
+    type: path
+    default: "./src"
+    description: "Directory to scan"
+  severity:
+    type: enum
+    values: ["LOW", "HIGH", "CRITICAL"]
+    default: "HIGH"
+
+steps:
+  # Runs in parallel with fetch_policy (no dependencies between them)
+  - id: scan_code
+    name: "Static secret & unsafe pattern scan"
+    cmd:
+      [
+        "rg",
+        "--json",
+        "-e",
+        "password|secret|api_key|unsafe",
+        "{{ inputs.target_dir }}",
+      ]
+    ignore_exit_code: true
+
+  # Runs in parallel with scan_code
+  - id: fetch_policy
+    name: "Load internal security rules from SQLite"
+    cmd: ["sqlite3", "-json", "./security_rules.db"]
+    stdin: |
+      SELECT rule_id, description FROM rules WHERE severity = '{{ inputs.severity }}';
+
+  # Fan-in: waits for both scan_code and fetch_policy
+  - id: local_llm_audit
+    name: "Triage findings with local LLM"
+    cmd: ["ollama", "run", "qwen2.5-coder:7b", "--format", "json"]
+    cache: true
+    stdin: |
+      You are an offline security auditor.
+      Rules: {{ steps.fetch_policy.stdout }}
+      Findings: {{ steps.scan_code.stdout }}
+      Respond ONLY with JSON: {"block_release": boolean, "summary": string}
+    parse_stdout: json
+
+  # Deterministic conditional routing
+  - id: release_gate
+    type: switch
+    condition: "{{ steps.local_llm_audit.json.block_release }}"
+    cases:
+      "true": record_incident
+      "false": approve_release
+
+  - id: record_incident
+    cmd: ["sqlite3", "./security_rules.db"]
+    stdin: |
+      INSERT INTO incidents (summary, ts)
+      VALUES ('{{ steps.local_llm_audit.json.summary }}', datetime('now'));
+
+  - id: approve_release
+    cmd: ["echo", "Release approved."]
+
+output: "{{ steps.local_llm_audit.json.summary }}"
+```
+
+### 3. Execute or Inspect Visually
+
+```bash
+# Validate DAG topology and check required system binaries in $PATH$ stdo doctor
+
+# Run headlessly in terminal or CI/CD
+$ stdo run -i target_dir=./crates/engine -i severity=CRITICAL
+
+# Launch the 100% offline Studio UI on [http://127.0.0.1:8080](http://127.0.0.1:8080)
+$ stdo serve --watch
+```
+
+## Embedded Studio (`stdo serve`)
+
+Running `stdo serve` starts a local-only HTTP/WebSocket server bound strictly to `127.0.0.1:8080` with **zero external CDN calls**:
+
+- **Left Panel (Auto-Generated Controls):** Renders typed inputs (`string`, `path`, `enum`, `number`, `boolean`) directly from your `stdo.yaml`.
+- **Center Panel (Live SVG DAG):** Visualizes topological layers, parallel branches, and conditional switches. Active nodes pulse in real time as processes execute.
+- **Right Panel (Stream Inspector):** Click any node to inspect resolved `stdin`, live `stdout` / `stderr` lines, execution latency (`ms`), exit code, and SHA-256 cache hit status.
+
+## Roadmap
+
+### Phase 1 — Foundation (`v0.0.x` → `v0.1.0`)
+
+- [x] Crate reservation & baseline CLI (`stdo`).
+- [ ] Topological DAG parser (`stdo.yaml`), cycle detector, and `stdo doctor` binary verifier.
+- [ ] Dual execution engine: Buffered `minijinja` templating (`stdin`) + Native OS file-descriptor piping (`pipe_from`).
+- [ ] Parallel execution of independent topological layers via `tokio::process`.
+
+### Phase 2 — Caching & Embedded Studio (`v0.2.0`)
+
+- [ ] Content-Addressable Storage (CAS) in `.stdo/cache/` keyed by `SHA-256(cmd + args + stdin)`.
+- [ ] `stdo serve` local server (`127.0.0.1:8080`) with embedded single-file Vanilla JS + SVG DAG UI (`rust-embed`).
+- [ ] Live WebSocket streaming of `stdout` / `stderr` and hot-reload on `stdo.yaml` changes (`--watch`).
+
+### Phase 3 — Industrial Benchmarking & Streaming (`v0.3.0`)
+
+- [ ] `stdo bench`: Built-in A/B/C pipeline comparison harness measuring end-to-end latency, Time-To-First-Byte (TTFB/TTFT), and peak RSS memory per node.
+- [ ] Continuous JSONL line-by-line stream routing for high-frequency sensor and log pipelines.
+- [ ] Exportable offline HTML/JSON execution audit reports for air-gapped compliance.
+
+## License
+
+Licensed under the **Apache License, Version 2.0** ([LICENSE](https://github.com/adiktiv-technologies/stdo/blob/main/LICENSE) or http://www.apache.org/licenses/LICENSE-2.0).
