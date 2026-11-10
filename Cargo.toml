@@ -11,6 +11,15 @@ keywords = ["workflow", "dag", "orchestrator", "cli", "unix"]
 categories = ["command-line-utilities", "development-tools"]
 exclude = ["AGENTS.md", ".github/", ".claude/", "release-plz.toml"]
 
+[dependencies]
+clap = { version = "4", default-features = false, features = ["derive", "std", "help", "usage", "error-context"] }
+minijinja = { version = "2", default-features = false, features = ["builtins", "serde", "std_collections"] }
+serde = { version = "1", default-features = false, features = ["derive", "std"] }
+serde_json = "1"
+serde_yaml = "0.9"
+thiserror = "2"
+tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "process", "io-util", "sync", "fs"] }
+
 [profile.release]
 opt-level = "z"
 lto = true
