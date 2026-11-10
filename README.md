@@ -44,7 +44,7 @@ At the heart of `stdo` is a **DAG (_Directed Acyclic Graph_)**:
                                                                                                └─► BLOCK
 ```
 
-Before running a single command, `stdo` topologically sorts your DAG, validates that no circular dependencies exist, and performs a **Doctor Check** to confirm every required binary exists in your `$PATH`.
+Before starting subprocesses, `stdo run` sorts and validates the DAG. Use `stdo doctor` to check the graph and confirm executable availability without starting any workflow commands.
 
 ## Quickstart
 
@@ -63,7 +63,11 @@ cargo install stdo # Pre-alpha CLI skeleton (v0.0.1)
 `stdo` supports two complementary data-passing modes between nodes:
 
 - **Buffered Templating (`stdin: "{{ steps.x.stdout }}"`):** Waits for step `x` to complete, then injects its output into a template (ideal for assembling multi-source prompts).
-- **Native OS Stream (`pipe_from: step_x`):** Wires the OS `stdout` pipe of `step_x` directly into the `stdin` of the current step for zero-copy, line-by-line JSONL streaming.
+- **Monitored Pipe (`pipe_from: step_x`):** Captures `step_x`'s stdout in 64 KiB reads and writes those bytes to the downstream command's stdin after the upstream layer finishes. Both stdout and stderr are drained while stdin is being written.
+
+By default, `run` and `doctor` allow up to 64 steps, 16 layers, and 16 steps per layer. Use `--force` to bypass these graph limits. Subprocess streams still have an 8 MiB limit each, with a shared 32 MiB budget for captured data, pipe read buffers, and rendered I/O buffers. On failure, `stdo run` prints the PID and last known status of each direct child it started.
+
+Use `{{ inputs.key }}` in command arguments and pass step output through `stdin` templates or `pipe_from`. The workflow's `output` template determines what `stdo run` writes to stdout.
 
 ```yaml
 version: "1.0"
@@ -136,7 +140,8 @@ output: "{{ steps.local_llm_audit.json.summary }}"
 ### 3. Execute or Inspect Visually
 
 ```bash
-# Validate DAG topology and check required system binaries in $PATH$ stdo doctor
+# Validate DAG topology and check required system binaries in $PATH
+$ stdo doctor
 
 # Run headlessly in terminal or CI/CD
 $ stdo run -i target_dir=./crates/engine -i severity=CRITICAL
@@ -158,9 +163,9 @@ Running `stdo serve` starts a local-only HTTP/WebSocket server bound strictly to
 ### Phase 1 — Foundation (`v0.0.x` → `v0.1.0`)
 
 - [x] Crate reservation & baseline CLI (`stdo`).
-- [ ] Topological DAG parser (`stdo.yaml`), cycle detector, and `stdo doctor` binary verifier.
-- [ ] Dual execution engine: Buffered `minijinja` templating (`stdin`) + Native OS file-descriptor piping (`pipe_from`).
-- [ ] Parallel execution of independent topological layers via `tokio::process`.
+- [x] Topological DAG parser (`stdo.yaml`), cycle detector, and `stdo doctor` binary verifier.
+- [x] Buffered `minijinja` stdin templates and monitored `pipe_from` transfers.
+- [x] Parallel execution within each topological layer via `tokio::process`.
 
 ### Phase 2 — Caching & Embedded Studio (`v0.2.0`)
 

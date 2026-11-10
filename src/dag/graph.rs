@@ -6,14 +6,23 @@ use crate::{engine::template, error::Error};
 
 use super::schema::{StepKind, Workflow};
 
+pub const MAX_STEPS: usize = 64;
+pub const MAX_DEPTH: usize = 16;
+pub const MAX_LAYER_WIDTH: usize = 16;
+
 /// Step indices in declaration order within each parallel layer.
 #[derive(Debug)]
 pub struct Graph {
     pub layers: Vec<Vec<usize>>,
+    pub(crate) dependencies: Vec<BTreeSet<usize>>,
 }
 
 impl Graph {
     pub fn build(workflow: &Workflow) -> Result<Self, Error> {
+        Self::build_with_force(workflow, false)
+    }
+
+    pub fn build_with_force(workflow: &Workflow, force: bool) -> Result<Self, Error> {
         if workflow.version != "1.0" {
             return Err(Error::InvalidWorkflow(format!(
                 "unsupported workflow version {:?}",
@@ -97,7 +106,29 @@ impl Graph {
             )?;
         }
 
-        sort_layers(workflow, dependencies).map(|layers| Self { layers })
+        let layers = sort_layers(workflow, &dependencies)?;
+        let steps = workflow.steps.len();
+        let depth = layers.len();
+        let max_width = layers.iter().map(Vec::len).max().unwrap_or(0);
+        if steps > MAX_STEPS || depth > MAX_DEPTH || max_width > MAX_LAYER_WIDTH {
+            if !force {
+                return Err(Error::GraphLimitExceeded {
+                    steps,
+                    depth,
+                    max_width,
+                    max_steps: MAX_STEPS,
+                    max_depth: MAX_DEPTH,
+                    max_layer_width: MAX_LAYER_WIDTH,
+                });
+            }
+            eprintln!(
+                "WARNING: Graph safety limits bypassed with --force (steps: {steps}, depth: {depth}, max_width: {max_width})"
+            );
+        }
+        Ok(Self {
+            layers,
+            dependencies,
+        })
     }
 }
 
@@ -141,12 +172,12 @@ fn add_template_dependencies(
 
 fn sort_layers(
     workflow: &Workflow,
-    dependencies: Vec<BTreeSet<usize>>,
+    dependencies: &[BTreeSet<usize>],
 ) -> Result<Vec<Vec<usize>>, Error> {
     let mut indegrees: Vec<_> = dependencies.iter().map(BTreeSet::len).collect();
     let mut successors = vec![Vec::new(); dependencies.len()];
-    for (index, sources) in dependencies.into_iter().enumerate() {
-        for source in sources {
+    for (index, sources) in dependencies.iter().enumerate() {
+        for &source in sources {
             successors[source].push(index);
         }
     }
