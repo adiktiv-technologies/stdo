@@ -197,6 +197,7 @@ See the [workflow gallery](examples/README.md) for the ETL and release gate exam
 - Turn a Gemma 4 answer into a WAV file with [Ollama and Phonon](examples/07-ollama-gemma4-phonon-speech.yaml).
 - Route a Rust source triage report from a [local Ollama model](examples/08-ollama-local-pr-triage.yaml).
 - Fetch a REST endpoint with retries and write validated JSONL through an [atomic pipe](examples/09-generic-http-api-pipeline.yaml).
+- Turn a local voiceover into a 1080p MP4 with the [YouTube capsule generator](examples/10-youtube-capsule-generator.yaml).
 
 ### Stream local speech with Ollama and Phonon
 

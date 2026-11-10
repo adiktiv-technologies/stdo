@@ -14,7 +14,8 @@ const SENSOR: &str = "examples/06-jsonl-sensor-stream.yaml";
 const SPEECH: &str = "examples/07-ollama-gemma4-phonon-speech.yaml";
 const TRIAGE: &str = "examples/08-ollama-local-pr-triage.yaml";
 const HTTP: &str = "examples/09-generic-http-api-pipeline.yaml";
-const GALLERY: [&str; 9] = [
+const CAPSULE: &str = "examples/10-youtube-capsule-generator.yaml";
+const GALLERY: [&str; 10] = [
     AUDIT,
     ETL,
     GATE,
@@ -24,6 +25,7 @@ const GALLERY: [&str; 9] = [
     SPEECH,
     TRIAGE,
     HTTP,
+    CAPSULE,
 ];
 
 fn root() -> &'static Path {
@@ -473,6 +475,66 @@ exit 1
             .to_string_lossy()
             .starts_with("shared.jsonl.tmp.")
     }));
+}
+
+#[test]
+fn capsule_renders_slate_and_recording_offline() {
+    let workspace = StubWorkspace::new("capsule");
+    workspace.stub(
+        "ollama",
+        r#"
+[ "$1" = run ]
+case "$2" in
+  gemma4) [ "$3" = --hidethinking ]; printf 'Unix pipes connect tools.\n' ;;
+  phonon:latest) [ "$(cat)" = 'Unix pipes connect tools.' ]; printf 'RIFF\000\000\000\000WAVE' ;;
+  *) exit 1 ;;
+esac
+"#,
+    );
+    workspace.stub(
+        "ffmpeg",
+        r#"
+[ "$(wc -c < './voice track.wav' | tr -d ' ')" = 12 ]
+case " $* " in
+  *' -stream_loop -1 -i ./screen recording.mov '*) printf 'recording\n' >> render-modes ;;
+  *' color=c=0x0d1117:s=1920x1080:r=30 '*) printf 'slate\n' >> render-modes ;;
+  *) exit 1 ;;
+esac
+for output do :; done
+case "$output" in './finished video.mp4.tmp.'*.mp4) ;; *) exit 1 ;; esac
+printf '\000\000\000\014ftypisom' > "$output"
+"#,
+    );
+    assert!(workspace
+        .success("doctor", CAPSULE, &[])
+        .contains("required executables available"));
+    let args = [
+        "-i",
+        "output_wav=voice track.wav",
+        "-i",
+        "output_mp4=finished video.mp4",
+    ];
+    let expected = "Unix pipes connect tools.\nWAV: voice track.wav (12 bytes)\nMP4: finished video.mp4 (12 bytes)\n";
+    assert_eq!(workspace.success("run", CAPSULE, &args), expected);
+    fs::write(workspace.0.join("screen recording.mov"), b"fixture").unwrap();
+    let recording = [
+        args.as_slice(),
+        &["-i", "background_video=screen recording.mov"],
+    ]
+    .concat();
+    assert_eq!(workspace.success("run", CAPSULE, &recording), expected);
+    assert_eq!(
+        fs::read(workspace.0.join("voice track.wav")).unwrap(),
+        b"RIFF\0\0\0\0WAVE"
+    );
+    assert_eq!(
+        fs::read(workspace.0.join("finished video.mp4")).unwrap(),
+        b"\0\0\0\x0cftypisom"
+    );
+    assert_eq!(
+        fs::read_to_string(workspace.0.join("render-modes")).unwrap(),
+        "slate\nrecording\n"
+    );
 }
 
 #[test]

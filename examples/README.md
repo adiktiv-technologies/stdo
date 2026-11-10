@@ -1,6 +1,6 @@
 # Workflow gallery
 
-Run these commands from the repository root with `stdo` v0.5.0 or later on your PATH. Examples 01 through 06 use POSIX tools and local inputs. Examples 07 through 09 list their extra prerequisites below.
+Run these commands from the repository root with `stdo` on your PATH. Examples 01 through 06 use POSIX tools and local inputs. Examples 07 through 10 list their extra prerequisites below.
 
 Workflows 01, 04, and 05 also resolve their paths when run from inside `examples/`. Add `--telemetry` (`-t`) to write execution timings and peak monitored buffer usage to stderr.
 
@@ -96,4 +96,17 @@ The speech and HTTP sinks use same-directory rename for atomic replacement. Powe
 ```sh
 stdo doctor -f examples/09-generic-http-api-pipeline.yaml
 stdo run -f examples/09-generic-http-api-pipeline.yaml -i output_jsonl=./releases.jsonl
+```
+
+## 10 · Local YouTube capsule
+
+Gemma 4 writes a short narration, Phonon streams WAV bytes to a staged file, and FFmpeg renders a 1080p H.264/AAC MP4. With `background_video` set to an existing recording, FFmpeg loops it and fits it to a 1080p frame. Otherwise it generates a dark slate. Both output files publish by same-directory rename. Studio shows players and download links for both outputs.
+
+Run Ollama with Gemma 4 and Phonon available locally, and put an FFmpeg build with `libx264` and AAC encoding on your PATH. The render step invokes FFmpeg from a shell, so check its availability separately. [Ollama speech guide](https://docs.ollama.com/capabilities/speech) · [FFmpeg documentation](https://ffmpeg.org/ffmpeg.html)
+
+```sh
+ffmpeg -version
+stdo doctor -f examples/10-youtube-capsule-generator.yaml
+stdo run -f examples/10-youtube-capsule-generator.yaml -i topic='How Unix pipes work'
+stdo serve -f examples/10-youtube-capsule-generator.yaml
 ```

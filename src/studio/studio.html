@@ -30,6 +30,7 @@ main{display:grid;grid-template-columns:minmax(0,1fr) minmax(320px,29vw);height:
 .step-output pre{max-height:200px;overflow:auto;margin:5px 0 0}
 .binary-preview{display:block;margin-top:5px;color:var(--template);font-size:12px;overflow-wrap:anywhere}
 .workflow-output audio{display:block;width:100%;margin:8px 0 4px}
+.workflow-output video{display:block;width:100%;max-height:260px;border-radius:8px;background:#000;margin:8px 0 4px}
 .workflow-output a{color:var(--pipe);overflow-wrap:anywhere}
 .command-builder{margin:0 0 14px}
 .command-builder h4{margin:0 0 6px;font-size:13px}
@@ -1060,15 +1061,15 @@ function cleanDiagnostics(text) {
 function showArtifacts(panel, artifacts) {
   for (const artifact of artifacts) {
     const source = '/api/artifact?path=' + encodeURIComponent(artifact.path);
-    const audio = element('audio');
-    audio.controls = true;
-    audio.preload = 'metadata';
-    audio.src = source;
-    audio.setAttribute('aria-label',artifact.name);
+    const player = element(artifact.content_type.startsWith('video/') ? 'video' : 'audio');
+    player.controls = true;
+    player.preload = 'metadata';
+    player.src = source;
+    player.setAttribute('aria-label',artifact.name);
     const download = element('a','Download ' + artifact.name);
     download.href = source;
     download.download = artifact.name;
-    panel.append(audio,download);
+    panel.append(player,download);
   }
 }
 function showStep(result) {

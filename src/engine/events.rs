@@ -76,19 +76,42 @@ impl Events {
         let prefix = if preview.checked_header {
             Vec::new()
         } else {
-            // A RIFF signature may be split across reads. Hold at most 12 bytes.
+            // Media signatures may be split across reads. Hold at most 12 bytes.
             let count = (12 - preview.prefix.len()).min(bytes.len());
             preview.prefix.extend_from_slice(&bytes[..count]);
             bytes = &bytes[count..];
             let prefix = &preview.prefix;
             let possible_riff = b"RIFF".starts_with(&prefix[..prefix.len().min(4)])
                 && b"WAVE".starts_with(prefix.get(8..).unwrap_or_default());
-            if possible_riff && prefix.len() < 12 {
+            let ebml = b"\x1a\x45\xdf\xa3";
+            let atom = prefix.get(4..8);
+            let format = if possible_riff && prefix.len() == 12 {
+                Some("RIFF/WAV audio")
+            } else if prefix.starts_with(ebml) {
+                Some("WebM/EBML video")
+            } else if matches!(atom, Some(b"moov" | b"wide" | b"mdat"))
+                && prefix.first() == Some(&0)
+            {
+                Some("QuickTime/MOV video")
+            } else if atom == Some(b"ftyp") && prefix.len() == 12 {
+                Some(if &prefix[8..12] == b"qt  " {
+                    "QuickTime/MOV video"
+                } else {
+                    "MP4 video"
+                })
+            } else {
+                None
+            };
+            if let Some(format) = format {
+                preview.binary = true;
+                self.binary(id, format);
                 return;
             }
-            if possible_riff {
-                preview.binary = true;
-                self.binary(id, "RIFF/WAV audio");
+            if prefix.len() < 12
+                && (possible_riff
+                    || ebml.starts_with(prefix)
+                    || (prefix.first() == Some(&0) && (prefix.len() < 8 || atom == Some(b"ftyp"))))
+            {
                 return;
             }
             preview.checked_header = true;
@@ -118,7 +141,11 @@ impl Events {
             .remove(id);
         if let Some(preview) = preview {
             if !preview.binary && !preview.prefix.is_empty() {
-                self.text(id, &preview.prefix, &[]);
+                if preview.prefix.contains(&0) {
+                    self.binary(id, "binary data");
+                } else {
+                    self.text(id, &preview.prefix, &[]);
+                }
             }
         }
     }

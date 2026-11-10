@@ -103,6 +103,26 @@ impl Studio {
 }
 
 #[test]
+fn studio_serves_mp4_byte_ranges() {
+    let studio = Studio::start();
+    fs::write(studio.root.join("capsule.mp4"), b"\0\0\0\x0cftypisom").unwrap();
+    let mut socket = studio.connect(
+        "GET",
+        "/api/artifact?path=capsule.mp4",
+        None,
+        "Range: bytes=4-11\r\n",
+    );
+    let mut response = String::new();
+    socket.read_to_string(&mut response).unwrap();
+    let (headers, body) = response.split_once("\r\n\r\n").unwrap();
+    assert!(headers.starts_with("HTTP/1.1 206 Partial Content"));
+    assert!(headers.contains("Content-Type: video/mp4"));
+    assert!(headers.contains("Accept-Ranges: bytes"));
+    assert!(headers.contains("Content-Range: bytes 4-11/12"));
+    assert_eq!(body, "ftypisom");
+}
+
+#[test]
 fn studio_streams_stdout_before_workflow_completion() {
     let studio = Studio::start();
     let draft = json!({"workflow": {

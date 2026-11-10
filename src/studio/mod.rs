@@ -383,7 +383,14 @@ impl Studio {
             Vec::new()
         };
         let artifacts = if result.is_ok() {
-            self.artifacts.register(&self.root, workflow, inputs).await
+            self.artifacts
+                .register(
+                    &self.root,
+                    workflow,
+                    inputs,
+                    &String::from_utf8_lossy(&stdout),
+                )
+                .await
         } else {
             Vec::new()
         };
@@ -471,7 +478,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn streams_wav_metadata_and_serves_only_allowed_audio_with_ranges() {
+    async fn streams_media_metadata_and_serves_only_allowed_files_with_ranges() {
         const AUDIO: &[u8] = b"RIFF\x04\0\0\0WAVE\xff";
         let directory =
             std::env::temp_dir().join(format!("stdo-studio-audio-{}", std::process::id()));
@@ -488,6 +495,9 @@ mod tests {
         let outside = fixture.0.join("outside.wav");
         fs::write(&outside, AUDIO).await.unwrap();
         fs::write(workspace.join("local.wav"), AUDIO).await.unwrap();
+        fs::write(workspace.join("local.mp4"), b"\0\0\0\x0cftypisom")
+            .await
+            .unwrap();
         fs::write(workspace.join("fake.wav"), b"unrelated data")
             .await
             .unwrap();
@@ -509,6 +519,14 @@ mod tests {
             assert!(headers.starts_with("HTTP/1.1 404 Not Found"), "{headers}");
         }
         let (headers, body) = exchange_bytes(&studio, request("GET", "local.wav", "")).await;
+        let (video_headers, video_body) = exchange_bytes(
+            &studio,
+            request("GET", "local.mp4", "Range: bytes=4-11\r\n"),
+        )
+        .await;
+        assert!(video_headers.starts_with("HTTP/1.1 206 Partial Content"));
+        assert!(video_headers.contains("Content-Type: video/mp4"));
+        assert_eq!(video_body, b"ftypisom");
         assert!(headers.contains("Content-Type: audio/wav"));
         assert_eq!(body, AUDIO);
         let (headers, _) = exchange_bytes(
@@ -521,11 +539,13 @@ mod tests {
         let draft = json!({"inputs":[format!("output_wav={outside}")],"workflow":{
             "version":"1.0", "name":"audio",
             "inputs":{"output_wav":{"type":"path","default":"missing.wav"}},
+            "output":"local.mp4",
             "steps":[
                 {"id":"speech","cmd":["sh","-c",
                     "printf RI; sleep 0.05; printf 'FF\\004\\000\\000\\000WAVE\\377'; head -c 600000 /dev/zero"],
                     "capture_stdout":false},
-                {"id":"summary","cmd":["echo","byte summary"],"stdin":"{{ steps.speech.exit_code }}"}
+                {"id":"summary","cmd":["echo","byte summary"],"stdin":"{{ steps.speech.exit_code }}"},
+                {"id":"video","cmd":["sh","-c","printf '\\000\\000'; sleep 0.05; printf '\\000\\014ftypisom'"]}
             ]
         }});
         let (headers,body) = exchange(&studio,format!(
@@ -543,6 +563,11 @@ mod tests {
             .any(|event| event["type"] == "step_stdout_binary"
                 && event["id"] == "speech"
                 && event["format"] == "RIFF/WAV audio"));
+        assert!(events
+            .iter()
+            .any(|event| event["type"] == "step_stdout_binary"
+                && event["id"] == "video"
+                && event["format"] == "MP4 video"));
         let chunks: Vec<_> = events
             .iter()
             .filter(|event| event["type"] == "step_stdout_chunk")
@@ -551,6 +576,7 @@ mod tests {
         assert_eq!(chunks[0]["id"], "summary");
         let result = &events.last().unwrap()["result"];
         assert_eq!(result["artifacts"][0]["path"], outside);
+        assert_eq!(result["artifacts"][1]["content_type"], "video/mp4");
         assert_eq!(
             result["telemetry"]["steps"][0]["stdout_bytes"],
             AUDIO.len() + 600_000
