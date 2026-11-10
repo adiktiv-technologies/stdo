@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.2](https://github.com/adiktiv-technologies/stdo/compare/v0.5.1...v0.5.2) - 2026-11-10
+
+### Fixed
+
+- *(examples,benchmarks)* use atomic temp-file rename in sinks, record OS RSS, and sync CHANGELOG ([#24](https://github.com/adiktiv-technologies/stdo/pull/24))
+
 ### Fixed
 
 - Stage the speech and HTTP examples' output beside the destination and rename only after a successful write.
