@@ -6,6 +6,7 @@ use std::{
 };
 
 use super::budget::{Budget, MAX_WORKFLOW_MEMORY_BYTES};
+use super::events::{EngineEvent, Events};
 use serde::Serialize;
 
 #[derive(Clone)]
@@ -15,6 +16,7 @@ pub struct Telemetry {
     records: Arc<Mutex<Records>>,
     capture_stderr: bool,
     hash_stdout: bool,
+    events: Option<Events>,
 }
 
 impl Default for Telemetry {
@@ -25,6 +27,7 @@ impl Default for Telemetry {
             records: Arc::default(),
             capture_stderr: false,
             hash_stdout: false,
+            events: None,
         }
     }
 }
@@ -149,6 +152,11 @@ impl Telemetry {
         }
     }
 
+    pub(crate) fn with_events(mut self, events: Events) -> Self {
+        self.events = Some(events);
+        self
+    }
+
     pub(crate) fn studio_report(&self) -> (serde_json::Value, String, bool) {
         let records = self.records.lock().expect("telemetry lock");
         let mut stderr = Vec::new();
@@ -173,32 +181,7 @@ impl Telemetry {
         let steps = records
             .steps
             .iter()
-            .map(|((layer, _), step)| {
-                let (kind, exit_code) = match &step.status {
-                    Status::Exit(status) => ("exit", status.code()),
-                    Status::CacheHit(status) => ("cache_hit", status.code()),
-                    Status::Switch(_) => ("switch", None),
-                    Status::Skipped => ("skipped", None),
-                    Status::Cancelled => ("cancelled", None),
-                    Status::Failed => ("failed", None),
-                };
-                StepTelemetry {
-                    id: step.id.clone(),
-                    layer: *layer,
-                    status: step.status.to_string(),
-                    kind,
-                    exit_code,
-                    cache_hit: kind == "cache_hit",
-                    duration_ms: milliseconds(step.duration),
-                    ttfb_ms: step.ttfb.map(milliseconds),
-                    stdout_bytes: step.stdout,
-                    stderr_bytes: step.stderr,
-                    stdout_sha256: step
-                        .stdout_sha256
-                        .clone()
-                        .or_else(|| self.hash_stdout.then(|| crate::report::sha256(b""))),
-                }
-            })
+            .map(|((layer, _), step)| step.snapshot(*layer, self.hash_stdout))
             .collect();
         let layers = records
             .layers
@@ -228,6 +211,9 @@ impl Telemetry {
     }
 
     pub(super) fn layer(&self, number: usize) -> LayerTimer<'_> {
+        if let Some(events) = &self.events {
+            events.emit(EngineEvent::LayerStarted { layer: number });
+        }
         LayerTimer {
             telemetry: self,
             number,
@@ -332,6 +318,22 @@ pub(super) struct StepTimer {
 }
 
 impl StepTimer {
+    pub(super) fn started(&self) {
+        if let Some(events) = &self.telemetry.events {
+            let id = self.record.as_ref().expect("active step").id.clone();
+            events.emit(EngineEvent::StepStarted {
+                id,
+                layer: self.key.0,
+            });
+        }
+    }
+
+    pub(super) fn stdout_chunk(&self, bytes: &[u8]) {
+        if let Some(events) = &self.telemetry.events {
+            events.stdout(&self.record.as_ref().expect("active step").id, bytes);
+        }
+    }
+
     pub(super) fn first_byte(&mut self, started: Instant, at: Instant) {
         let record = self.record.as_mut().expect("active step");
         record.ttfb = Some(at.duration_since(started));
@@ -373,12 +375,46 @@ impl Drop for StepTimer {
         if !matches!(record.status, Status::Skipped) {
             record.duration = self.started.elapsed();
         }
+        if let Some(events) = &self.telemetry.events {
+            events.emit(EngineEvent::StepFinished {
+                telemetry: record.snapshot(self.key.0, self.telemetry.hash_stdout),
+            });
+        }
         self.telemetry
             .records
             .lock()
             .expect("telemetry lock")
             .steps
             .insert(self.key, record);
+    }
+}
+
+impl Step {
+    fn snapshot(&self, layer: usize, hash_stdout: bool) -> StepTelemetry {
+        let (kind, exit_code) = match &self.status {
+            Status::Exit(status) => ("exit", status.code()),
+            Status::CacheHit(status) => ("cache_hit", status.code()),
+            Status::Switch(_) => ("switch", None),
+            Status::Skipped => ("skipped", None),
+            Status::Cancelled => ("cancelled", None),
+            Status::Failed => ("failed", None),
+        };
+        StepTelemetry {
+            id: self.id.clone(),
+            layer,
+            status: self.status.to_string(),
+            kind,
+            exit_code,
+            cache_hit: kind == "cache_hit",
+            duration_ms: milliseconds(self.duration),
+            ttfb_ms: self.ttfb.map(milliseconds),
+            stdout_bytes: self.stdout,
+            stderr_bytes: self.stderr,
+            stdout_sha256: self
+                .stdout_sha256
+                .clone()
+                .or_else(|| hash_stdout.then(|| crate::report::sha256(b""))),
+        }
     }
 }
 

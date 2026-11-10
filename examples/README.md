@@ -57,3 +57,12 @@ Reads the crate version and Cargo exclusions, checks that each workflow is liste
 stdo doctor -f examples/05-stdo-release-readiness.yaml
 stdo run -f examples/05-stdo-release-readiness.yaml
 ```
+
+## 06 · JSONL sensor stream
+
+A command emits JSON Lines sensor readings. The next step filters and renames fields over a monitored pipe, then a switch routes on the number of retained records.
+
+```sh
+stdo doctor -f examples/06-jsonl-sensor-stream.yaml
+stdo run -f examples/06-jsonl-sensor-stream.yaml
+```

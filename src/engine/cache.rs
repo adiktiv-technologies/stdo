@@ -45,6 +45,7 @@ impl Entry {
         let stdout_format = match step.parse_stdout {
             None => 0,
             Some(StdoutFormat::Json) => 1,
+            Some(StdoutFormat::Jsonl) => 2,
         };
         hash.update([u8::from(step.ignore_exit_code), stdout_format]);
         hash_field(&mut hash, stdin);

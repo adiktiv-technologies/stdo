@@ -1,0 +1,36 @@
+version: "1.0"
+name: jsonl-sensor-stream
+description: Filter and route a line-delimited stream of local sensor readings.
+
+steps:
+  - id: sensors
+    cmd:
+      - sh
+      - -c
+      - |
+        printf '%s\n' \
+          '{"sensor": "east", "temperature": 18}' \
+          '{"sensor": "west", "temperature": 32}' \
+          '{"sensor": "north", "temperature": 27}'
+    parse_stdout: jsonl
+  - id: hot
+    cmd:
+      - awk
+      - '/"temperature":(2[5-9]|[3-9][0-9])[,}]/ { sub(/"temperature":/, "\"celsius\":"); print }'
+    pipe_from: sensors
+    parse_stdout: jsonl
+  - id: threshold
+    type: switch
+    condition: "{{ (steps.hot.json | length) > 0 }}"
+    cases:
+      "true": alert
+      "false": quiet
+  - id: alert
+    cmd: [cat]
+    stdin: |
+      ALERT: {{ steps.hot.json | length }} hot readings
+      First: {{ steps.hot.json[0].sensor }} at {{ steps.hot.json[0].celsius }} C
+  - id: quiet
+    cmd: [echo, 'No hot readings']
+
+output: "{% if (steps.hot.json | length) > 0 %}{{ steps.alert.stdout }}{% else %}{{ steps.quiet.stdout }}{% endif %}"

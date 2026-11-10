@@ -42,6 +42,12 @@ pub enum Error {
         step: String,
         source: serde_json::Error,
     },
+    #[error("step {step:?} produced invalid JSONL at line {line}: {source}")]
+    JsonLine {
+        step: String,
+        line: usize,
+        source: serde_json::Error,
+    },
     #[error("could not write workflow output: {0}")]
     WriteOutput(io::Error),
     #[error("step cache I/O failed at {path:?}: {source}")]

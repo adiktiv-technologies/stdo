@@ -1,14 +1,42 @@
 use std::{io, time::Duration};
 
+use crate::engine::events::EngineEvent;
 use serde_json::{json, Value};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
+    sync::mpsc,
     time::timeout,
 };
 
 pub(super) const MAX_BODY: usize = 1024 * 1024;
 const MAX_HEADERS: usize = 16 * 1024;
 const SOCKET_TIMEOUT: Duration = Duration::from_secs(5);
+
+pub(super) async fn start_stream(socket: &mut (impl AsyncWrite + Unpin)) -> io::Result<()> {
+    stream_write(socket, b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\nX-Content-Type-Options: nosniff\r\n\r\n").await
+}
+
+pub(super) async fn stream(
+    socket: &mut (impl AsyncWrite + Unpin),
+    mut events: mpsc::UnboundedReceiver<EngineEvent>,
+) {
+    while let Some(event) = events.recv().await {
+        let finished = matches!(event, EngineEvent::WorkflowFinished { .. });
+        let mut frame = b"data: ".to_vec();
+        serde_json::to_writer(&mut frame, &event).expect("engine event serializes");
+        frame.extend_from_slice(b"\n\n");
+        if stream_write(socket, &frame).await.is_err() || finished {
+            break;
+        }
+    }
+    let _ = timeout(SOCKET_TIMEOUT, socket.shutdown()).await;
+}
+
+async fn stream_write(socket: &mut (impl AsyncWrite + Unpin), bytes: &[u8]) -> io::Result<()> {
+    timeout(SOCKET_TIMEOUT, socket.write_all(bytes))
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "Studio stream write timed out"))?
+}
 
 pub(super) struct Request {
     pub method: String,

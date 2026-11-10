@@ -200,3 +200,25 @@ output: '{{ steps.emit.stdout }} {{ steps.emit.stderr }}'
         "cache hit (exit 0)",
     );
 }
+
+#[test]
+fn cached_jsonl_replays_normalized_bytes_and_exposes_records() {
+    let workspace = Workspace::new(
+        r#"
+version: '1.0'
+name: cache-jsonl
+steps:
+  - id: emit
+    cmd: [sh, -c, 'printf " { \"value\" : 1 }\r\n\n{\"value\":2}"']
+    parse_stdout: jsonl
+    cache: true
+  - id: copy
+    cmd: [cat]
+    pipe_from: emit
+output: '{{ steps.emit.json | length }}:{{ steps.emit.json[0].value }}:{{ steps.copy.stdout }}'
+"#,
+    );
+    let expected = b"2:1:{\"value\":1}\n{\"value\":2}\n";
+    assert_run(workspace.run(&["-t"]), expected, "cached=0");
+    assert_run(workspace.run(&["-t"]), expected, "cache hit (exit 0)");
+}

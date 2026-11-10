@@ -59,6 +59,15 @@ impl Studio {
         body: Option<&Value>,
         headers: &str,
     ) -> (u16, String) {
+        let mut socket = self.connect(method, path, body, headers);
+        let mut response = String::new();
+        socket.read_to_string(&mut response).unwrap();
+        let (headers, body) = response.split_once("\r\n\r\n").unwrap();
+        let status = headers.split_whitespace().nth(1).unwrap().parse().unwrap();
+        (status, body.to_owned())
+    }
+
+    fn connect(&self, method: &str, path: &str, body: Option<&Value>, headers: &str) -> TcpStream {
         let mut socket = TcpStream::connect_timeout(&self.address, Duration::from_secs(5)).unwrap();
         socket
             .set_read_timeout(Some(Duration::from_secs(5)))
@@ -83,11 +92,7 @@ impl Studio {
         } else {
             write!(socket, "\r\n").unwrap();
         }
-        let mut response = String::new();
-        socket.read_to_string(&mut response).unwrap();
-        let (headers, body) = response.split_once("\r\n\r\n").unwrap();
-        let status = headers.split_whitespace().nth(1).unwrap().parse().unwrap();
-        (status, body.to_owned())
+        socket
     }
 
     fn json(&self, method: &str, path: &str, body: Option<&Value>) -> Value {
@@ -95,6 +100,97 @@ impl Studio {
         assert_eq!(status, 200, "{response}");
         serde_json::from_str(&response).unwrap()
     }
+}
+
+#[test]
+fn studio_streams_stdout_before_workflow_completion() {
+    let studio = Studio::start();
+    let draft = json!({"workflow": {
+        "version":"1.0", "name":"stream",
+        "steps":[{"id":"emit","cmd":["sh","-c",
+            "printf early; for attempt in 1 2 3 4 5; do if [ -f release ]; then printf late; exit 0; fi; sleep 1; done; exit 9"
+        ]}],
+        "output":"{{ steps.emit.stdout }}"
+    }});
+    let mut stream = BufReader::new(studio.connect("POST", "/api/run/stream", Some(&draft), ""));
+    let mut headers = String::new();
+    loop {
+        let mut line = String::new();
+        assert_ne!(stream.read_line(&mut line).unwrap(), 0);
+        if line == "\r\n" {
+            break;
+        }
+        headers.push_str(&line);
+    }
+    assert!(headers.starts_with("HTTP/1.1 200 OK\r\n"), "{headers}");
+    assert!(headers.contains("Content-Type: text/event-stream\r\n"));
+    assert!(headers.contains("Cache-Control: no-cache\r\n"));
+    let mut types = Vec::new();
+    let mut stdout = Vec::new();
+    let mut final_result = None;
+    for line in stream.lines() {
+        let line = line.unwrap();
+        let Some(frame) = line.strip_prefix("data: ") else {
+            continue;
+        };
+        let event: Value = serde_json::from_str(frame).unwrap();
+        let kind = event["type"].as_str().unwrap();
+        types.push(kind.to_owned());
+        match kind {
+            "step_stdout_chunk" => {
+                assert_eq!(event["id"], "emit");
+                stdout.extend(
+                    event["chunk"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .map(|byte| byte.as_u64().unwrap() as u8),
+                );
+                if stdout == b"early" {
+                    // The process cannot finish until the client receives this event.
+                    fs::write(studio.root.join("release"), "").unwrap();
+                }
+            }
+            "step_finished" => {
+                assert_eq!(event["telemetry"]["status"], "exit 0");
+                assert!(event["telemetry"]["ttfb_ms"].is_number());
+            }
+            "workflow_finished" => final_result = Some(event["result"].clone()),
+            _ => {}
+        }
+    }
+    assert_eq!(stdout, b"earlylate");
+    assert_eq!(types.first().unwrap(), "layer_started");
+    assert_eq!(types[1], "step_started");
+    assert_eq!(types.last().unwrap(), "workflow_finished");
+    let result = final_result.unwrap();
+    assert_eq!(result["ok"], true);
+    assert_eq!(result["stdout"], "earlylate");
+}
+
+#[test]
+fn studio_metadata_tracks_external_file_edits() {
+    use sha2::{Digest, Sha256};
+
+    let studio = Studio::start();
+    let meta = "/api/workflow/meta?path=stdo.yaml";
+    let saved = studio.json(
+        "POST",
+        "/api/workflow",
+        Some(&json!({"path":"stdo.yaml","workflow":workflow()})),
+    );
+    assert_eq!(studio.json("GET", meta, None)["sha256"], saved["sha256"]);
+    let edited = saved["yaml"]
+        .as_str()
+        .unwrap()
+        .replace("name: studio-test", "name: changed-on-disk");
+    fs::write(studio.root.join("stdo.yaml"), &edited).unwrap();
+    let hash = format!("{:x}", Sha256::digest(edited.as_bytes()));
+    assert_ne!(saved["sha256"], hash);
+    assert_eq!(studio.json("GET", meta, None)["sha256"], hash);
+    let reloaded = studio.json("GET", "/api/workflow?path=stdo.yaml", None);
+    assert_eq!(reloaded["sha256"], hash);
+    assert_eq!(reloaded["workflow"]["name"], "changed-on-disk");
 }
 
 impl Drop for Studio {

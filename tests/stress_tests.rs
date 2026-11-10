@@ -13,6 +13,30 @@ use stdo::{
     engine::runner::{MAX_STEP_OUTPUT_BYTES, MAX_WORKFLOW_MEMORY_BYTES},
 };
 
+#[test]
+fn invalid_jsonl_fails_at_the_physical_line_and_stops_the_live_producer() {
+    let workflow = WorkflowFile::new(
+        r#"
+version: '1.0'
+name: jsonl-error
+steps:
+  - id: emit
+    cmd: [sh, -c, 'printf "%s\n" "{\"ok\":true}" "" "broken"; exec sleep 30']
+    parse_stdout: jsonl
+  - id: downstream
+    cmd: [cat]
+    pipe_from: emit
+"#,
+    );
+    let output = workflow.execute("run", &["-t"]);
+    let report = stderr(&output);
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(report.contains("invalid JSONL at line 3"), "{report}");
+    assert_process(&report, "emit", "Killed");
+    assert!(!report.contains("step \"downstream\""), "{report}");
+}
+
 struct WorkflowFile(PathBuf);
 
 impl WorkflowFile {

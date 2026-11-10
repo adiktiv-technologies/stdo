@@ -1,5 +1,7 @@
 mod budget;
 mod cache;
+pub(crate) mod events;
+mod jsonl;
 mod ledger;
 pub mod runner;
 pub(crate) mod telemetry;
@@ -14,7 +16,7 @@ use tokio::{sync::watch, task::JoinSet};
 use crate::{
     dag::{
         graph::Graph,
-        schema::{CommandStep, Input, InputKind, StepKind, Workflow},
+        schema::{CommandStep, Input, InputKind, StdoutFormat, StepKind, Workflow},
     },
     error::Error,
 };
@@ -135,6 +137,9 @@ async fn run_workflow(
                 StepKind::Switch(switch) => {
                     let mut timing =
                         telemetry.map(|report| report.step(layer_number, index, &step.id));
+                    if let Some(timer) = &timing {
+                        timer.started();
+                    }
                     let result =
                         template::render_bounded(&switch.condition, &context, &budget, &step.id)?;
                     let selected = std::str::from_utf8(result.bytes())
@@ -193,10 +198,13 @@ async fn run_workflow(
         let mut error = None;
         for (index, id, command, argv, input) in commands {
             let mut timing = telemetry.map(|report| report.step(layer_number, index, id));
+            if let Some(timer) = &timing {
+                timer.started();
+            }
             let entry = (command.cache && !no_cache).then(|| {
                 cache::Entry::new(&argv, command, input.as_deref().map_or(&[], Buffer::bytes))
             });
-            let parse_json = command.parse_stdout.is_some();
+            let format = command.parse_stdout.clone();
             if let Some(entry) = &entry {
                 let read_started = timing.as_ref().map(|_| std::time::Instant::now());
                 match entry.load(&budget, id).await {
@@ -204,7 +212,16 @@ async fn run_workflow(
                         let read_finished =
                             read_started.map(|started| (started, std::time::Instant::now()));
                         // A malformed JSON payload is a cache miss, just like a truncated entry.
-                        if let Ok(value) = StepOutput::new(captured, parse_json, id) {
+                        let value = match StepOutput::new(captured, format.as_ref(), id, true) {
+                            Ok(value) => Some(value),
+                            Err(source @ Error::MemoryLimitExceeded { .. }) => {
+                                error = Some(source);
+                                cancel.send_replace(true);
+                                break;
+                            }
+                            Err(_) => None,
+                        };
+                        if let Some(value) = value {
                             if let Some(timer) = &mut timing {
                                 if let Some((started, finished)) = read_finished {
                                     timer.cache_read(
@@ -218,6 +235,7 @@ async fn run_workflow(
                                     value.captured.stdout.bytes(),
                                     value.captured.stderr.bytes(),
                                 );
+                                timer.stdout_chunk(value.captured.stdout.bytes());
                             }
                             outputs.insert(id.to_owned(), TemplateValue::from_object(value));
                             continue;
@@ -247,14 +265,31 @@ async fn run_workflow(
             let receiver = cancel.subscribe();
             let id = id.to_owned();
             tasks.spawn(async move {
-                let Some(captured) = running.finish(budget, receiver, timing).await? else {
+                let Some(captured) = running
+                    .finish(
+                        budget,
+                        receiver,
+                        timing.as_mut(),
+                        format == Some(StdoutFormat::Jsonl),
+                    )
+                    .await?
+                else {
                     return Ok(None);
                 };
-                let value = StepOutput::new(captured, parse_json, &id)?;
-                if let Some(entry) = entry {
-                    entry.store(&value.captured).await?;
+                let result = async {
+                    let value = StepOutput::new(captured, format.as_ref(), &id, false)?;
+                    if let Some(entry) = entry {
+                        entry.store(&value.captured).await?;
+                    }
+                    Ok(Some((id, TemplateValue::from_object(value))))
                 }
-                Ok(Some((id, TemplateValue::from_object(value))))
+                .await;
+                if result.is_err() {
+                    if let Some(timer) = &mut timing {
+                        timer.set_status(Status::Failed);
+                    }
+                }
+                result
             });
         }
         while let Some(result) = tasks.join_next().await {
@@ -321,16 +356,29 @@ struct StepOutput {
 }
 
 impl StepOutput {
-    fn new(captured: Captured, parse_json: bool, step: &str) -> Result<Self, Error> {
-        let json = if parse_json {
-            let value: Value =
-                serde_json::from_slice(captured.stdout.bytes()).map_err(|source| Error::Json {
-                    step: step.to_owned(),
-                    source,
-                })?;
-            Some(TemplateValue::from_serialize(value))
-        } else {
-            None
+    fn new(
+        captured: Captured,
+        format: Option<&StdoutFormat>,
+        step: &str,
+        cached: bool,
+    ) -> Result<Self, Error> {
+        let json = match format {
+            Some(StdoutFormat::Json) => {
+                let value: Value =
+                    serde_json::from_slice(captured.stdout.bytes()).map_err(|source| {
+                        Error::Json {
+                            step: step.to_owned(),
+                            source,
+                        }
+                    })?;
+                Some(TemplateValue::from_serialize(value))
+            }
+            Some(StdoutFormat::Jsonl) => Some(TemplateValue::from_object(jsonl::Records::new(
+                captured.stdout.clone(),
+                step,
+                cached,
+            )?)),
+            None => None,
         };
         Ok(Self { captured, json })
     }
