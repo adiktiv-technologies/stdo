@@ -16,7 +16,7 @@ A compact, zero-network Rust binary that orchestrates local CLI tools (`curl`, `
 </div>
 
 > [!NOTE]
-> **Phases 1 and 2 are complete in `v0.2.0`.** The release includes `stdo doctor`, `stdo run`, `--telemetry`, SHA-256 content-addressable caching in `.stdo/cache/`, and the zero-CDN WYSIWYG Studio in `stdo serve`. Phase 3 (`v0.3.0`) is next, with `stdo bench`, live SSE streaming, and offline audit exports.
+> **Phases 1, 2, and 3 (`v0.3.0`) are complete.** `stdo` includes the DAG runner, SHA-256 caching, the offline Studio with live SSE output and file reload, JSONL routing, pipeline benchmarks, and offline execution audits.
 
 ## Why `stdo`?
 
@@ -70,6 +70,8 @@ cargo install --path . --locked
 
 - **Buffered Templating (`stdin: "{{ steps.x.stdout }}"`):** Waits for step `x` to complete, then injects its output into a template (ideal for assembling multi-source prompts).
 - **Monitored Pipe (`pipe_from: step_x`):** Captures `step_x`'s stdout in 64 KiB reads and writes those bytes to the downstream command's stdin after the upstream layer finishes. Both stdout and stderr are drained while stdin is being written.
+
+Set `parse_stdout: jsonl` to validate each non-empty JSON Lines record as stdout arrives. The runner compacts each record, ignores blank lines, and delivers newline-delimited bytes to `pipe_from` consumers at the existing layer boundary. An invalid record fails the producer with its line number. Templates and switches can use `steps.<id>.json | length` or index a record with `steps.<id>.json[0]`. Try [the JSONL sensor example](examples/06-jsonl-sensor-stream.yaml).
 
 By default, `run` and `doctor` allow up to 64 steps, 16 layers, and 16 steps per layer. Use `--force` to bypass these graph limits. Subprocess streams still have an 8 MiB limit each, with a shared 32 MiB budget for captured data, pipe read buffers, and rendered I/O buffers. On failure, `stdo run` prints the PID and last known status of each direct child it started.
 
@@ -190,7 +192,8 @@ Open [Studio](http://127.0.0.1:8080) in your browser. With no file argument, Stu
 
 - Drag nodes to arrange them. Connect output and input ports to add pipe, template, or switch links. Click an edge to remove it.
 - Use **Edit** to configure workflow inputs and steps, or use **YAML** to edit the same draft as text. **Validate (Doctor)** checks the draft. **Save YAML** validates the DAG and atomically writes it inside the working directory.
-- Use **Run Workflow** to execute the draft with optional input overrides and cache bypass. The inspector shows workflow stdout, captured stderr excerpts, timings, cache hits, and the PID ledger on failure.
+- Use **Run Workflow** to execute the draft with optional input overrides and cache bypass. Studio streams node states and a bounded stdout preview over SSE, then shows workflow output, timings, cache hits, and the PID ledger on failure.
+- Studio reloads external file edits when the draft is clean and flags conflicts when you have unsaved changes.
 
 ## Roadmap
 
@@ -210,9 +213,9 @@ Open [Studio](http://127.0.0.1:8080) in your browser. With no file argument, Stu
 
 ### Phase 3 — Industrial Benchmarking & Streaming (`v0.3.0`)
 
-- [ ] Live Studio output streaming over server-sent events (SSE) and workflow file reload.
+- [x] Live Studio output streaming over server-sent events (SSE) and workflow file reload.
 - [x] `stdo bench` A/B/C comparisons with latency percentiles, TTFB, cache hit ratios, and peak monitored buffer usage.
-- [ ] Continuous JSONL line-by-line stream routing for high-frequency sensor and log pipelines.
+- [x] Continuous JSONL line-by-line validation and routing for sensor and log pipelines.
 - [x] Offline HTML/JSON execution audits and benchmark reports.
 
 ## License

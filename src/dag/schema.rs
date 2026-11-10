@@ -100,11 +100,12 @@ pub struct CommandStep {
     pub parse_stdout: Option<StdoutFormat>,
 }
 
-#[derive(Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum StdoutFormat {
     Json,
+    Jsonl,
 }
 
 #[cfg(test)]

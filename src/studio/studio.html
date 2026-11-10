@@ -12,6 +12,10 @@ main{display:grid;grid-template-columns:minmax(0,1fr) minmax(320px,29vw);height:
 #stage{position:relative;min-width:100%;min-height:100%}#edges-layer,#nodes-layer,#layers{position:absolute;inset:0;width:100%;height:100%}#nodes-layer,#layers,#edges-layer{pointer-events:none}.layer-label{position:absolute;color:var(--muted);font:12px var(--mono);width:228px;padding-bottom:7px;border-bottom:1px solid #3c4d68}.edge{fill:none;stroke:var(--edge);stroke-width:2;opacity:.85}.edge-hit{fill:none;stroke:transparent;stroke-width:15;pointer-events:stroke;cursor:pointer}.edge-hit:hover+.edge,.edge-hit:focus+.edge{stroke:var(--error);stroke-width:3;opacity:1}.wire-preview{fill:none;stroke:var(--text);stroke-dasharray:4 5;stroke-width:2}.node{position:absolute;width:228px;height:108px;pointer-events:auto;background:#192437;border:1px solid #465775;border-radius:9px;box-shadow:0 6px 12px #060a1455}.node.selected{outline:2px solid var(--template);outline-offset:3px}.node[data-result=passed]{border-color:var(--pipe)}.node[data-result=failed]{border-color:var(--error)}.node[data-result=skipped]{opacity:.64}.node[data-result=cached]{border-color:var(--template)}.node header{cursor:grab;touch-action:none;display:flex;gap:8px;align-items:center;padding:9px 11px;border-bottom:1px solid var(--line)}.node header:active{cursor:grabbing}.node header button{margin-left:auto;padding:2px 6px;font-size:11px}.node header strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:600 13px var(--mono)}.node .kind{font:11px var(--mono);color:var(--pipe)}.node.switch .kind{color:var(--branch)}.node .summary,.node .badge{display:block;margin:8px 11px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font:12px var(--mono);color:var(--muted)}.node .badge{color:var(--text);font-size:11px}.port{position:absolute;top:47px;width:13px;height:13px;padding:0;border:2px solid #182235;background:var(--pipe);border-radius:50%;cursor:crosshair}.port.in{left:-7px}.port.out{right:-7px}.port:hover{background:#fff}.port.armed{outline:2px solid var(--text)}
 #yaml-panel{display:flex;flex-direction:column;min-height:0;background:var(--panel);border-left:1px solid var(--line)}.tabs{display:flex;gap:4px;padding:8px;border-bottom:1px solid var(--line)}.tabs button{flex:1;background:transparent}.tabs [aria-selected=true]{background:#29354a;border-color:#546485}.pane{padding:14px;overflow:auto;flex:1}.pane[hidden]{display:none}.pane h2{font-size:15px;margin:0 0 12px}.pane h3{font-size:13px;margin:16px 0 8px}.field{display:grid;gap:4px;margin:0 0 10px;color:var(--muted);font-size:12px}.field input,.field select,.field textarea{width:100%;color:var(--text);font:12px var(--mono)}.field input[type=checkbox]{width:auto;justify-self:start}.field textarea{min-height:65px;resize:vertical}.input-card{border-top:1px solid var(--line);padding-top:11px;margin-top:12px}.input-card button{font-size:12px}#yaml{display:block;width:100%;height:calc(100% - 56px);min-height:230px;resize:vertical;font:12px/1.5 var(--mono);tab-size:2}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.45 var(--mono);background:var(--bar);padding:9px;border:1px solid var(--line);border-radius:6px}#notice{min-height:35px;padding:8px 13px;border-top:1px solid var(--line);font-size:12px;color:var(--muted);overflow-wrap:anywhere}#notice[data-tone=error]{color:var(--error)}#notice[data-tone=success]{color:var(--pipe)}
 @media(max-width:820px){main{height:auto;grid-template-columns:1fr}#workspace{height:60dvh}#yaml-panel{min-height:400px;border-left:0;border-top:1px solid var(--line)}#toolbar .toolbar-group:last-child{margin-left:0}.legend{display:none}}
+.node[data-result=running]{border-color:#73aaff;box-shadow:0 0 16px #73aaff66}
+.node[data-result=running] .badge{color:#a8caff}
+#disk-notice{color:var(--branch);padding:8px 13px;font-size:12px}
+#live-stdout{max-height:240px;overflow:auto}
 </style>
 </head>
 <body>
@@ -59,6 +63,7 @@ main{display:grid;grid-template-columns:minmax(0,1fr) minmax(320px,29vw);height:
       <label><input id="no-cache" type="checkbox"> Bypass step cache</label>
       <div id="results"><p class="quiet">Run the workflow to inspect its output and timings.</p></div>
     </section>
+    <div id="disk-notice" role="status" hidden></div>
     <div id="notice" role="status" aria-live="polite">Loading workflows…</div>
   </aside>
 </main>
@@ -69,7 +74,7 @@ const svgNS = 'http://www.w3.org/2000/svg';
 const state = {
   workflow: null, path: '', paths: [], layers: [], positions: new Map(), pinned: new Set(), selected: null,
   dirty: false, raw: false, revision: 0, timer: null, pending: null, drag: null,
-  results: new Map(), saved: false, fileRequest: 0, loading: false
+  results: new Map(), saved: false, fileRequest: 0, loading: false, diskHash: null, polling: false
 };
 const STEP_ID = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const STEP_REFERENCE = /steps\.([A-Za-z_][A-Za-z0-9_]*)\./g;
@@ -143,6 +148,8 @@ function replaceFile(path, data, saved) {
   state.selected = null;
   state.raw = false;
   state.saved = saved;
+  state.diskHash = saved ? data.sha256 : null;
+  diskNotice('');
   state.dirty = !saved;
   $('yaml').value = data.yaml || '';
   $('results').replaceChildren(element('p', 'Run the workflow to inspect its output and timings.', 'quiet'));
@@ -172,6 +179,36 @@ async function start() {
   const data = await api('/api/workflows');
   state.paths = data.workflows;
   await loadFile(data.selected || 'stdo.yaml');
+}
+function diskNotice(message) {
+  $('disk-notice').textContent = message;
+  $('disk-notice').hidden = !message;
+}
+async function pollDisk() {
+  if (!state.saved || state.loading || state.polling || $('save').disabled || $('run').disabled) return;
+  state.polling = true;
+  const path = state.path;
+  const revision = state.revision;
+  const request = state.fileRequest;
+  const current = () => path === state.path && request === state.fileRequest;
+  const editing = () => $('edit').contains(document.activeElement) &&
+    document.activeElement.matches('input, textarea, select');
+  try {
+    const meta = await api('/api/workflow/meta?path=' + encodeURIComponent(path));
+    if (!current()) return;
+    if (meta.sha256 === state.diskHash) return diskNotice('');
+    if (state.dirty || editing()) return diskNotice('This file changed on disk. Your draft is still open.');
+    const data = await api(fileUrl(path));
+    if (!current() || revision !== state.revision || state.dirty || editing() ||
+        $('save').disabled || $('run').disabled || state.drag) return;
+    replaceFile(path, data, true);
+    notice('Reloaded ' + path + ' from disk' + (data.doctor.ok ? '.' : ' · ' + data.doctor.error),
+      data.doctor.ok ? 'success' : 'error');
+  } catch (error) {
+    if (current()) diskNotice('Cannot reload from disk: ' + error.message);
+  } finally {
+    state.polling = false;
+  }
 }
 function updatePreview() {
   clearTimeout(state.timer);
@@ -265,12 +302,7 @@ function render(redrawEditor = true) {
     header.append(button('Edit', () => selectStep(step.id)));
     header.addEventListener('pointerdown', event => startDrag(event, step, card));
     card.append(header, element('div', isSwitch ? step.condition || 'Set a condition' : (step.cmd || []).join(' '), 'summary'));
-    const result = state.results.get(step.id);
-    if (result) {
-      card.dataset.result = result.cache_hit ? 'cached' : result.kind === 'skipped' || result.kind === 'cancelled' ?
-        'skipped' : result.kind === 'failed' || (result.kind === 'exit' && result.exit_code !== 0) ? 'failed' : 'passed';
-      card.append(element('span', result.duration_ms.toFixed(2) + ' ms  ' + result.status, 'badge'));
-    }
+    updateBadge(card, state.results.get(step.id));
     for (const direction of ['in','out']) {
       const port = element('button', '', 'port ' + direction);
       port.dataset.step = step.id;
@@ -558,7 +590,7 @@ function renderEditor() {
       }));
       pane.append(toggle('Cache result',step.cache,value => change('cache',value)));
       pane.append(toggle('Ignore nonzero exit codes',step.ignore_exit_code,value => change('ignore_exit_code',value)));
-      pane.append(selectField('Parse stdout',[['','Raw bytes'],['json','JSON']],step.parse_stdout || '',
+      pane.append(selectField('Parse stdout',[['','Raw bytes'],['json','JSON'],['jsonl','JSON Lines (JSONL)']],step.parse_stdout || '',
         value => change('parse_stdout',value || null)));
     }
     pane.append(button('Delete step', () => removeStep(step), 'danger'));
@@ -654,6 +686,7 @@ function discardDraft() {
 }
 async function save() {
   if (!state.workflow || state.loading) return;
+  if (!$('disk-notice').hidden && !confirm('Replace the externally changed file with this draft?')) return;
   const control = $('save');
   control.disabled = true;
   const path = state.path;
@@ -666,6 +699,8 @@ async function save() {
       state.revision++;
       applyPreview(data);
       state.saved = true;
+      state.diskHash = data.sha256;
+      diskNotice('');
       state.dirty = false;
       notice(data.doctor.ok ? 'Saved ' + path : 'Saved. Doctor: ' + data.doctor.error,
         data.doctor.ok ? 'success' : 'error');
@@ -688,40 +723,134 @@ async function validate(apply = false) {
     notice(data.doctor.ok ? 'Doctor passed' : data.doctor.error, data.doctor.ok ? 'success' : 'error');
   } catch (error) { notice(error.message,'error'); }
 }
+function updateBadge(card, result) {
+  card.querySelector('.badge')?.remove();
+  if (!result) {
+    delete card.dataset.result;
+    return;
+  }
+  card.dataset.result = result.kind === 'running' ? 'running' : result.cache_hit ? 'cached' :
+    ['skipped','cancelled'].includes(result.kind) ? 'skipped' :
+      result.kind === 'failed' || (result.kind === 'exit' && result.exit_code !== 0) ? 'failed' : 'passed';
+  const text = result.kind === 'running' ? 'running…' :
+    result.duration_ms.toFixed(2) + ' ms · ' + result.status +
+      (result.ttfb_ms == null ? '' : ' · TTFB ' + result.ttfb_ms.toFixed(2) + ' ms');
+  const badge = element('span',text,'badge');
+  badge.title = text;
+  card.append(badge);
+}
+function showStep(result) {
+  state.results.set(result.id,result);
+  const card = Array.from($('nodes-layer').children).find(card => card.dataset.step === result.id);
+  if (card) updateBadge(card,result);
+}
+
+async function readRunEvents(body, consume) {
+  const response = await fetch('/api/run/stream',{
+    method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)
+  });
+  if (!response.ok) {
+    const data = await response.json();
+    throw new Error(data.error || 'Studio run request failed');
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let pending = '';
+  try {
+    for (;;) {
+      const {value,done} = await reader.read();
+      pending += decoder.decode(value,{stream:!done});
+      let boundary;
+      while ((boundary = pending.indexOf('\n\n')) !== -1) {
+        const frame = pending.slice(0,boundary);
+        pending = pending.slice(boundary+2);
+        if (frame.startsWith('data: ') && !consume(JSON.parse(frame.slice(6)))) return;
+      }
+      if (done) throw new Error('The execution stream closed before the final result.');
+    }
+  } finally {
+    await reader.cancel().catch(() => {});
+  }
+}
+
 async function run() {
   if (!state.workflow || state.loading) return;
   const control = $('run');
   control.disabled = true;
   const path = state.path;
   const revision = state.revision;
+  const current = () => path === state.path && revision === state.revision;
   const overrides = Object.keys(state.workflow.inputs || {}).flatMap(name => {
     const value = inputOverrides.get(name);
     return value === undefined ? [] : [name+'='+value];
   });
+  state.results.clear();
+  for (const card of $('nodes-layer').children) updateBadge(card,null);
   tab('inspect');
   notice('Running ' + path + '…');
+
+  const result = $('results');
+  const live = element('pre','Waiting for output…');
+  live.id = 'live-stdout';
+  result.replaceChildren(element('h3','Live step stdout'),live);
+  const decoders = new Map();
+  let lastStep = null;
+  function appendChunk(id, bytes, done = false) {
+    if (!decoders.has(id)) decoders.set(id,new TextDecoder());
+    const text = decoders.get(id).decode(bytes,{stream:!done});
+    if (!text) return;
+    if (lastStep === null) live.textContent = '';
+    if (lastStep !== id) live.append((lastStep === null ? '' : '\n') + '[' + id + ']\n');
+    live.append(text);
+    lastStep = id;
+    live.scrollTop = live.scrollHeight;
+  }
   try {
-    const data = await api('/api/run','POST',{...payload(),inputs:overrides,no_cache:$('no-cache').checked});
-    if (path !== state.path || revision !== state.revision) return;
-    state.results = new Map(data.telemetry.steps.map(step => [step.id,step]));
-    render();
-    const result = $('results');
-    result.replaceChildren(
-      element('h3','Telemetry'),
-      element('p',data.telemetry.duration_ms.toFixed(2) + ' ms · ' + data.telemetry.peak_bytes.toLocaleString() + ' peak bytes'),
-      element('pre',data.telemetry.steps.map(step =>
-        step.id + '  ' + step.duration_ms.toFixed(2) + ' ms  ' + step.status +
-        '  (' + step.stdout_bytes + ' out / ' + step.stderr_bytes + ' err)').join('\n') || 'No steps ran.'),
-      element('h3','Stdout'),element('pre',data.stdout || 'No output'),
-      element('h3','Stderr' + (data.stderr_truncated ? ' (excerpt)' : '')),element('pre',data.stderr || 'No diagnostics')
-    );
-    if (data.pid_ledger.length) {
-      result.append(element('h3','PID ledger'),element('pre',data.pid_ledger.map(process =>
-        process.pid + '  ' + process.step + '  ' + process.status).join('\n')));
+    await readRunEvents({...payload(),inputs:overrides,no_cache:$('no-cache').checked}, event => {
+      if (!current()) return false;
+      if (event.type === 'layer_started') notice('Running layer ' + event.layer + '…');
+      if (event.type === 'step_started') showStep({id:event.id,kind:'running'});
+      if (event.type === 'step_stdout_chunk') appendChunk(event.id,Uint8Array.from(event.chunk));
+      if (event.type === 'step_finished') {
+        const step = event.telemetry;
+        if (decoders.has(step.id)) appendChunk(step.id,undefined,true);
+        showStep(step);
+      }
+      if (event.type !== 'workflow_finished') return true;
+
+      const data = event.result;
+      for (const step of data.telemetry.steps) showStep(step);
+      if (lastStep === null) live.textContent = 'No live output';
+      if (data.live_stdout_truncated) result.append(element('p','Live preview limit reached.','quiet'));
+      result.append(
+        element('h3','Telemetry'),
+        element('p',data.telemetry.duration_ms.toFixed(2) + ' ms · ' + data.telemetry.peak_bytes.toLocaleString() + ' peak bytes'),
+        element('pre',data.telemetry.steps.map(step =>
+          step.id + '  ' + step.duration_ms.toFixed(2) + ' ms  ' + step.status +
+          (step.ttfb_ms == null ? '' : ' · TTFB ' + step.ttfb_ms.toFixed(2) + ' ms') +
+          '  (' + step.stdout_bytes + ' out / ' + step.stderr_bytes + ' err)').join('\n') || 'No steps ran.'),
+        element('h3','Workflow stdout'),element('pre',data.stdout || 'No output'),
+        element('h3','Stderr' + (data.stderr_truncated ? ' (excerpt)' : '')),element('pre',data.stderr || 'No diagnostics')
+      );
+      if (data.pid_ledger.length) {
+        result.append(element('h3','PID ledger'),element('pre',data.pid_ledger.map(process =>
+          process.pid + '  ' + process.step + '  ' + process.status).join('\n')));
+      }
+      notice(data.ok ? 'Workflow completed' : data.error, data.ok ? 'success' : 'error');
+      return false;
+    });
+  } catch (error) {
+    if (current()) {
+      for (const step of state.results.values()) {
+        if (step.kind === 'running') {
+          state.results.delete(step.id);
+          const card = Array.from($('nodes-layer').children).find(card => card.dataset.step === step.id);
+          if (card) updateBadge(card,null);
+        }
+      }
+      notice(error.message,'error');
     }
-    notice(data.ok ? 'Workflow completed' : data.error, data.ok ? 'success' : 'error');
-  } catch (error) { notice(error.message,'error'); }
-  finally { control.disabled = false; }
+  } finally { control.disabled = false; }
 }
 
 for (const control of document.querySelectorAll('[data-tab]')) {
@@ -771,6 +900,7 @@ $('yaml').addEventListener('input',() => {
 window.addEventListener('beforeunload',event => {
   if (state.dirty) { event.preventDefault(); event.returnValue = ''; }
 });
+setInterval(pollDisk, 1500);
 start().catch(error => notice(error.message,'error'));
 </script>
 </body>

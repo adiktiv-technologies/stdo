@@ -68,6 +68,10 @@ pub(super) struct Buffer {
 }
 
 impl Buffer {
+    pub(super) fn budget(&self) -> &Budget {
+        &self.budget
+    }
+
     pub(super) fn bytes(&self) -> &[u8] {
         &self.bytes
     }
@@ -81,6 +85,18 @@ impl Buffer {
             step: step.to_owned(),
             limit_bytes,
         })
+    }
+
+    pub(super) fn stream_error(&self, step: &str, source: io::Error) -> Error {
+        self.limit_error(step).unwrap_or_else(|| Error::Process {
+            step: step.to_owned(),
+            source,
+        })
+    }
+
+    pub(super) fn append(&mut self, bytes: &[u8], step: &str) -> Result<(), Error> {
+        self.write_all(bytes)
+            .map_err(|source| self.stream_error(step, source))
     }
     pub(super) fn resize_zeroed(&mut self, size: usize) -> io::Result<()> {
         self.reserve(size)?;

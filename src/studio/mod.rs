@@ -21,8 +21,13 @@ use crate::{
     atomic_file,
     dag::{graph::Graph, schema::Workflow},
     doctor,
-    engine::{self, ProcessLedger, RunOptions, Telemetry},
+    engine::{
+        self,
+        events::{EngineEvent, Events},
+        ProcessLedger, RunOptions, Telemetry,
+    },
     error::Error,
+    report::sha256,
 };
 
 use http::{Problem, Request, Response, MAX_BODY};
@@ -117,6 +122,12 @@ impl Draft {
 impl Studio {
     async fn connection(&self, socket: &mut (impl AsyncRead + AsyncWrite + Unpin), port: u16) {
         let response = match Request::read(socket, port).await {
+            Ok(request) if request.method == "POST" && request.target == "/api/run/stream" => {
+                match self.run_stream(socket, &request.body).await {
+                    Ok(()) => return,
+                    Err(error) => Err(error),
+                }
+            }
             Ok(request) => self.route(request).await,
             Err(error) => Err(error),
         };
@@ -135,6 +146,11 @@ impl Studio {
                 let relative = http::query_path(query)?;
                 let (workflow, yaml) = self.load(&relative).await?;
                 Ok(inspect(&workflow, yaml))
+            }
+            ("GET", "/api/workflow/meta") => {
+                let relative = http::query_path(query)?;
+                let bytes = self.workflow_bytes(&relative).await?;
+                Ok(Response::json(json!({"sha256": sha256(&bytes)})))
             }
             ("POST", "/api/preview") => {
                 let (workflow, yaml) = decode::<Draft>(&request.body)?.parse()?;
@@ -161,12 +177,14 @@ impl Studio {
                 Ok(Response::json(json!({"deleted": true})))
             }
             ("POST", "/api/run") => self.run(decode(&request.body)?).await,
-            (_, "/" | "/api/workflows" | "/api/workflow" | "/api/preview" | "/api/run") => {
-                Err(Problem::new(
-                    "405 Method Not Allowed",
-                    "Method not allowed for this endpoint",
-                ))
-            }
+            (
+                _,
+                "/" | "/api/workflows" | "/api/workflow" | "/api/workflow/meta" | "/api/preview"
+                | "/api/run" | "/api/run/stream",
+            ) => Err(Problem::new(
+                "405 Method Not Allowed",
+                "Method not allowed for this endpoint",
+            )),
             _ => Err(Problem::new("404 Not Found", "Unknown Studio endpoint")),
         }
     }
@@ -236,12 +254,18 @@ impl Studio {
     }
 
     async fn load(&self, relative: &str) -> Result<(Workflow, String), Problem> {
+        let bytes = self.workflow_bytes(relative).await?;
+        let yaml = String::from_utf8(bytes).map_err(|_| Problem::bad("Workflow must be UTF-8"))?;
+        parse_yaml(yaml)
+    }
+
+    async fn workflow_bytes(&self, relative: &str) -> Result<Vec<u8>, Problem> {
         let file = File::open(self.path(relative).await?)
             .await
             .map_err(Problem::io)?;
-        let mut yaml = String::new();
+        let mut yaml = Vec::new();
         file.take((MAX_BODY + 1) as u64)
-            .read_to_string(&mut yaml)
+            .read_to_end(&mut yaml)
             .await
             .map_err(Problem::io)?;
         if yaml.len() > MAX_BODY {
@@ -250,54 +274,100 @@ impl Studio {
                 "Workflow file exceeds 1 MiB",
             ));
         }
-        parse_yaml(yaml)
+        Ok(yaml)
     }
 
-    async fn run(&self, request: Run) -> Result<Response, Problem> {
-        let _permit = self
-            .runs
-            .try_acquire()
-            .map_err(|_| Problem::new("409 Conflict", "A workflow is already running"))?;
-        let workflow = if request.draft.workflow.is_some() || request.draft.yaml.is_some() {
-            request.draft.parse()?.0
+    async fn run_workflow(&self, draft: Draft) -> Result<Workflow, Problem> {
+        if draft.workflow.is_some() || draft.yaml.is_some() {
+            Ok(draft.parse()?.0)
         } else {
-            let path = request
-                .draft
+            let path = draft
                 .path
                 .as_deref()
                 .ok_or_else(|| Problem::bad("A workflow path or draft is required"))?;
-            self.load(path).await?.0
-        };
-        let ledger = ProcessLedger::default();
-        let telemetry = Telemetry::for_studio();
-        let mut stdout = Vec::new();
-        let result = engine::run_with_options(
+            Ok(self.load(path).await?.0)
+        }
+    }
+
+    fn run_permit(&self) -> Result<tokio::sync::SemaphorePermit<'_>, Problem> {
+        self.runs
+            .try_acquire()
+            .map_err(|_| Problem::new("409 Conflict", "A workflow is already running"))
+    }
+
+    async fn run(&self, request: Run) -> Result<Response, Problem> {
+        let _permit = self.run_permit()?;
+        let workflow = self.run_workflow(request.draft).await?;
+        let result = execute(
             &workflow,
             &request.inputs,
-            &ledger,
-            &mut stdout,
-            RunOptions {
-                no_cache: request.no_cache,
-                telemetry: Some(&telemetry),
-                ..RunOptions::default()
-            },
+            request.no_cache,
+            &Telemetry::for_studio(),
         )
         .await;
-        let (report, stderr, stderr_truncated) = telemetry.studio_report();
-        let pid_ledger = if result.is_err() {
-            ledger.snapshot()
-        } else {
-            Vec::new()
-        };
-        let error = result.err().map(|error| match error {
-            Error::StepFailed { step, status, .. } => format!("step {step:?} failed with {status}"),
-            other => other.to_string(),
-        });
-        Ok(Response::json(json!({
-            "ok": error.is_none(), "error": error, "stdout": String::from_utf8_lossy(&stdout),
-            "stderr": stderr, "stderr_truncated": stderr_truncated, "telemetry": report, "pid_ledger": pid_ledger
-        })))
+        Ok(Response::json(result))
     }
+
+    async fn run_stream(
+        &self,
+        socket: &mut (impl AsyncWrite + Unpin),
+        body: &[u8],
+    ) -> Result<(), Problem> {
+        let request: Run = decode(body)?;
+        let _permit = self.run_permit()?;
+        let workflow = self.run_workflow(request.draft).await?;
+        // Request::read has already consumed the complete body before this response.
+        if http::start_stream(socket).await.is_err() {
+            return Ok(());
+        }
+        let (events, receiver) = Events::channel();
+        let telemetry = Telemetry::for_studio().with_events(events.clone());
+        let run = async move {
+            let mut result =
+                execute(&workflow, &request.inputs, request.no_cache, &telemetry).await;
+            result["live_stdout_truncated"] = json!(events.truncated());
+            events.emit(EngineEvent::WorkflowFinished { result });
+        };
+        // Let the engine finish and reap its processes if the browser disconnects.
+        tokio::join!(run, http::stream(socket, receiver));
+        Ok(())
+    }
+}
+
+async fn execute(
+    workflow: &Workflow,
+    inputs: &[String],
+    no_cache: bool,
+    telemetry: &Telemetry,
+) -> serde_json::Value {
+    let ledger = ProcessLedger::default();
+    let mut stdout = Vec::new();
+    let result = engine::run_with_options(
+        workflow,
+        inputs,
+        &ledger,
+        &mut stdout,
+        RunOptions {
+            no_cache,
+            telemetry: Some(telemetry),
+            ..RunOptions::default()
+        },
+    )
+    .await;
+    let (report, stderr, stderr_truncated) = telemetry.studio_report();
+    let pid_ledger = if result.is_err() {
+        ledger.snapshot()
+    } else {
+        Vec::new()
+    };
+    let error = result.err().map(|error| match error {
+        Error::StepFailed { step, status, .. } => format!("step {step:?} failed with {status}"),
+        other => other.to_string(),
+    });
+    json!({
+        "ok": error.is_none(), "error": error, "stdout": String::from_utf8_lossy(&stdout),
+        "stderr": stderr, "stderr_truncated": stderr_truncated, "telemetry": report, "pid_ledger": pid_ledger
+    })
 }
 
 fn decode<T: serde::de::DeserializeOwned>(body: &[u8]) -> Result<T, Problem> {
@@ -336,7 +406,7 @@ fn inspect(workflow: &Workflow, yaml: String) -> Response {
         .clone()
         .or_else(|| doctor::check(workflow).err().map(|error| error.to_string()));
     Response::json(json!({
-        "workflow": workflow, "yaml": yaml, "layers": layers, "graph_error": graph_error,
+        "workflow": workflow, "sha256": sha256(yaml.as_bytes()), "yaml": yaml, "layers": layers, "graph_error": graph_error,
         "doctor": {"ok": doctor_error.is_none(), "error": doctor_error}
     }))
 }
@@ -392,6 +462,31 @@ mod tests {
         let result: serde_json::Value = serde_json::from_str(&response).unwrap();
         assert_eq!(result["stdout"], "hello\n");
         assert_eq!(result["telemetry"]["steps"][0]["stdout_bytes"], 6);
+
+        let (headers, response) = exchange(&studio, format!(
+            "POST /api/run/stream HTTP/1.1\r\nHost: 127.0.0.1:8080\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        )).await;
+        assert!(headers.contains("Content-Type: text/event-stream\r\n"));
+        let events: Vec<serde_json::Value> = response
+            .lines()
+            .filter_map(|line| line.strip_prefix("data: "))
+            .map(|data| serde_json::from_str(data).unwrap())
+            .collect();
+        assert_eq!(
+            events
+                .iter()
+                .map(|event| event["type"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            [
+                "layer_started",
+                "step_started",
+                "step_stdout_chunk",
+                "step_finished",
+                "workflow_finished"
+            ]
+        );
+        assert_eq!(events[4]["result"]["stdout"], "hello\n");
 
         let (headers, _) = exchange(&studio, "POST /api/run HTTP/1.1\r\nHost: 127.0.0.1:8080\r\nContent-Type: application/json\r\nContent-Length: 0\r\nTransfer-Encoding: chunked\r\n\r\n".into()).await;
         assert!(

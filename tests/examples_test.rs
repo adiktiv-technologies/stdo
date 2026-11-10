@@ -5,7 +5,8 @@ const ETL: &str = "examples/02-monitored-pipe-etl.yaml";
 const GATE: &str = "examples/03-release-gate-switch.yaml";
 const ARCHITECTURE: &str = "examples/04-stdo-zero-network-guard.yaml";
 const READINESS: &str = "examples/05-stdo-release-readiness.yaml";
-const GALLERY: [&str; 5] = [AUDIT, ETL, GATE, ARCHITECTURE, READINESS];
+const SENSOR: &str = "examples/06-jsonl-sensor-stream.yaml";
+const GALLERY: [&str; 6] = [AUDIT, ETL, GATE, ARCHITECTURE, READINESS, SENSOR];
 
 fn root() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -131,7 +132,7 @@ fn release_readiness_renders_markdown_and_valid_json() {
     let card = invoke("run", READINESS, &[]);
     assert!(card.contains("# stdo release readiness\n"));
     assert!(card.contains(&format!("Crate version: `{}`", env!("CARGO_PKG_VERSION"))));
-    assert!(card.contains("Documented workflows: 5/5\n"));
+    assert!(card.contains("Documented workflows: 6/6\n"));
     assert!(card.contains("Status: READY\n"));
     let (_, fenced) = card.split_once("```json\n").unwrap();
     let (json, _) = fenced.split_once("\n```").unwrap();
@@ -156,6 +157,18 @@ fn release_readiness_renders_markdown_and_valid_json() {
             "integration_tests_present": true,
             "ready": true
         })
+    );
+}
+
+#[test]
+fn jsonl_sensor_stream_filters_and_routes_records() {
+    assert_eq!(
+        invoke("doctor", SENSOR, &[]),
+        "jsonl-sensor-stream: 5 steps in 4 layers, required executables available\n"
+    );
+    assert_eq!(
+        invoke("run", SENSOR, &[]),
+        "ALERT: 2 hot readings\nFirst: west at 32 C\n"
     );
 }
 
