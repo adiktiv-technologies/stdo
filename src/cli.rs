@@ -48,6 +48,9 @@ pub enum Command {
         /// Report workflow timings and monitored buffer usage on stderr.
         #[arg(short = 't', long)]
         telemetry: bool,
+        /// Bypass reading and writing the step cache.
+        #[arg(long)]
+        no_cache: bool,
         /// Bypass graph size limits.
         #[arg(long)]
         force: bool,

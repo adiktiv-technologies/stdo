@@ -59,16 +59,23 @@ async fn dispatch(
             );
         }
         Command::Run {
-            file, input, force, ..
+            file,
+            input,
+            force,
+            no_cache,
+            ..
         } => {
             let workflow = Workflow::read(file.path())?;
-            engine::run_with_telemetry(
+            engine::run_with_options(
                 &workflow,
                 &input,
-                force,
                 ledger,
                 &mut std::io::stdout(),
-                telemetry,
+                engine::RunOptions {
+                    force,
+                    no_cache,
+                    telemetry,
+                },
             )
             .await?;
         }

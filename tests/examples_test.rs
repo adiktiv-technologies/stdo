@@ -67,7 +67,7 @@ fn monitored_etl_renders_structured_json() {
         "monitored-pipe-etl: 5 steps in 5 layers, required executables available\n"
     );
     assert_eq!(
-        invoke("run", ETL, &[]),
+        invoke("run", ETL, &["--no-cache"]),
         "Kept 3 records\nFirst: apple\nLast: pear\n"
     );
 }

@@ -23,6 +23,8 @@ stdo run -f examples/01-parallel-repo-audit.yaml -i target_dir=./examples -i key
 
 An inline dataset flows through successive `pipe_from` links. The last step emits JSON with the record count and the first and last sorted values. The workflow renders those fields as text.
 
+The final step caches its JSON output using the incoming pipe bytes. Run the workflow twice with `-t` to see the cache hit, or pass `--no-cache` to recompute it.
+
 ```sh
 stdo doctor -f examples/02-monitored-pipe-etl.yaml
 stdo run -f examples/02-monitored-pipe-etl.yaml

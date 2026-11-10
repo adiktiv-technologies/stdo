@@ -18,6 +18,7 @@ steps:
       - awk
       - 'NR == 1 { first = $0 } { last = $0 } END { printf "{\"count\":%d,\"first\":\"%s\",\"last\":\"%s\"}\n", NR, first, last }'
     pipe_from: order
+    cache: true
     parse_stdout: json
 
 output: |

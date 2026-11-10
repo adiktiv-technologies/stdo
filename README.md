@@ -16,7 +16,7 @@ A compact, zero-network Rust binary that orchestrates local CLI tools (`curl`, `
 </div>
 
 > [!NOTE]
-> **Phase 1 (`v0.1.0`) is complete.** `stdo doctor` and `stdo run` are ready, with a topological DAG engine, parallel layers, monitored pipes, switch routing, and a PID ledger. The Embedded Studio UI (`stdo serve`) and SHA-256 content-addressable caching are scheduled for Phase 2 (`v0.2.0`).
+> **Phase 1 (`v0.1.0`) is complete.** `stdo doctor` and `stdo run` support parallel DAG layers, monitored pipes, switch routing, and a PID ledger. Phase 2 adds SHA-256 step caching. The Embedded Studio UI (`stdo serve`) is planned for `v0.2.0`.
 
 ## Why `stdo`?
 
@@ -26,7 +26,7 @@ Modern AI, data, and automation orchestrators (like Dify, Airflow, or Langflow) 
 
 1. **Zero HTTP Client Inside:** `stdo` contains no outbound network stack (`no reqwest`, `no openssl`). Need a REST API? Call `curl`. Need a local LLM? Call `ollama` or `llama-cli`. Need vector or relational queries? Call `sqlite3`.
 2. **True `stdin` / `stdout` Piping (No `ARG_MAX` Crashes):** Passing megabytes of JSON or RAG context through environment variables (`${OUTPUT}`) crashes the OS kernel (`ARG_MAX` limit) and invites shell-injection bugs. `stdo` streams data directly through process file descriptors (`fd 0` and `fd 1`).
-3. **Content-Addressable Cache (Phase 2):** Step results will be reusable when `SHA-256(cmd + args + stdin)` matches a cached result.
+3. **Content-Addressable Cache:** Deterministic steps can reuse captured output from a previous run.
 4. **Embedded Offline Studio (Phase 2):** A local Web UI will visualize the execution graph, generate input forms, and stream logs over WebSockets.
 
 ## What is a Unix DAG?
@@ -67,6 +67,8 @@ By default, `run` and `doctor` allow up to 64 steps, 16 layers, and 16 steps per
 Use `{{ inputs.key }}` in command arguments and pass step output through `stdin` templates or `pipe_from`. The workflow's `output` template determines what `stdo run` writes to stdout.
 
 Pass `--telemetry` (`-t`) to print step and layer timings, captured byte counts, and peak monitored buffer usage to stderr. Failed runs include a partial report. Failed commands also surface captured stderr above the PID ledger.
+
+Set `cache: true` on a deterministic command step to reuse its output from `.stdo/cache/` under the working directory. The SHA-256 key covers rendered arguments, stdin bytes, and the step's exit-code and output-parsing settings. If the command depends on files, environment variables, or other external state, account for those inputs in the workflow or run with `--no-cache` to bypass cache reads and writes. Telemetry reports cache hits separately from executed commands.
 
 ```yaml
 version: "1.0"
@@ -171,7 +173,7 @@ Phase 2 will add a local-only HTTP/WebSocket server bound to `127.0.0.1:8080` wi
 
 ### Phase 2 — Caching & Embedded Studio (`v0.2.0`)
 
-- [ ] Content-Addressable Storage (CAS) in `.stdo/cache/` keyed by `SHA-256(cmd + args + stdin)`.
+- [x] SHA-256 Content-Addressable Storage (CAS) for command steps in `.stdo/cache/`.
 - [ ] `stdo serve` local server (`127.0.0.1:8080`) with embedded single-file Vanilla JS + SVG DAG UI (`rust-embed`).
 - [ ] Live WebSocket streaming of `stdout` / `stderr` and hot-reload on `stdo.yaml` changes (`--watch`).
 

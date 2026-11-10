@@ -43,6 +43,8 @@ pub enum Error {
     },
     #[error("could not write workflow output: {0}")]
     WriteOutput(io::Error),
+    #[error("step cache I/O failed at {path:?}: {source}")]
+    Cache { path: PathBuf, source: io::Error },
 }
 
 struct Diagnostic<'a>(&'a str);
