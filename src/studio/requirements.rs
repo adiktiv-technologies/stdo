@@ -20,6 +20,8 @@ pub(super) fn summary(workflow: &Workflow, overrides: &[String]) -> Value {
     let context = json!({"inputs": inputs});
     let mut binaries = BTreeSet::new();
     let mut models = BTreeSet::new();
+    let mut binary_sources: BTreeMap<String, BTreeSet<&str>> = BTreeMap::new();
+    let mut model_references: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for step in &workflow.steps {
         let StepKind::Command(command) = &step.kind else {
             continue;
@@ -31,6 +33,10 @@ pub(super) fn summary(workflow: &Workflow, overrides: &[String]) -> Value {
             .collect();
         if let Some(program) = args.first().filter(|arg| !arg.is_empty()) {
             binaries.insert(program.clone());
+            binary_sources
+                .entry(program.clone())
+                .or_default()
+                .insert("step cmd");
             let basename = std::path::Path::new(program)
                 .file_name()
                 .and_then(|value| value.to_str())
@@ -38,6 +44,10 @@ pub(super) fn summary(workflow: &Workflow, overrides: &[String]) -> Value {
             if basename == "ollama" && args.get(1).is_some_and(|arg| arg == "run") {
                 if let Some(model) = args.get(2) {
                     models.insert(model.clone());
+                    model_references
+                        .entry(model.clone())
+                        .or_default()
+                        .insert(step.id.clone());
                 }
             }
             if matches!(basename, "sh" | "bash" | "zsh")
@@ -53,6 +63,10 @@ pub(super) fn summary(workflow: &Workflow, overrides: &[String]) -> Value {
                     ] {
                         if tokens.contains(tool) {
                             binaries.insert(tool.to_owned());
+                            binary_sources
+                                .entry(tool.to_owned())
+                                .or_default()
+                                .insert("shell script");
                         }
                     }
                 }
@@ -66,25 +80,26 @@ pub(super) fn summary(workflow: &Workflow, overrides: &[String]) -> Value {
             .filter(|model| !model.is_empty())
         {
             models.insert(model.to_owned());
+            model_references
+                .entry(model.to_owned())
+                .or_default()
+                .insert(format!("input {name}"));
         }
     }
     let binaries: Vec<_> = binaries
         .into_iter()
         .map(|name| {
             let path = resolve_executable(&name).and_then(|path| std::fs::canonicalize(path).ok());
-            json!({"name":name,"installed":path.is_some(),"path":path})
+            json!({"name":name,"installed":path.is_some(),"path":path,"sources":binary_sources.get(&name)})
         })
         .collect();
     let inputs: Vec<_> = workflow
         .inputs
         .iter()
-        .filter_map(|(name, input)| {
+        .map(|(name, input)| {
             let value = inputs.get(name);
             let required = value.is_none();
             let file = matches!(input.kind, InputKind::Path) || name.ends_with("_video");
-            if !required && !file {
-                return None;
-            }
             let path = value.and_then(Value::as_str).unwrap_or("");
             let output = name.starts_with("output");
             let status = if required {
@@ -93,14 +108,27 @@ pub(super) fn summary(workflow: &Workflow, overrides: &[String]) -> Value {
                 "optional"
             } else if output {
                 "output"
+            } else if !file {
+                "optional"
             } else if std::path::Path::new(path).exists() {
                 "exists"
             } else {
                 "missing"
             };
-            Some(json!({"name":name,"value":value,"status":status}))
+            let role = if output {
+                "Output artifact"
+            } else if input.default.is_none() {
+                "Required"
+            } else {
+                "Optional"
+            };
+            json!({"name":name,"value":value,"status":status,"type":input.kind,"role":role})
         })
         .collect();
-    json!({"binaries":binaries,"models":models,"inputs":inputs,
+    let model_details: Vec<_> = models
+        .iter()
+        .map(|name| json!({"name":name,"references":model_references.get(name)}))
+        .collect();
+    json!({"binaries":binaries,"models":models,"model_details":model_details,"inputs":inputs,
         "note":"Shell tools are detected heuristically. Model names are hints; local model availability is not probed."})
 }

@@ -658,7 +658,18 @@ mod tests {
             .iter()
             .any(|binary| binary["name"] == "ffmpeg"));
         assert_eq!(requirements["models"], json!(["gemma4"]));
-        assert_eq!(requirements["inputs"][0]["status"], "required");
+        assert!(requirements["inputs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|input| input["name"] == "needed" && input["status"] == "required"));
+        assert!(requirements["binaries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(
+                |binary| binary["name"] == "ffmpeg" && binary["sources"] == json!(["shell script"])
+            ));
 
         let body = json!({"workflow": {
             "version": "1.0", "name": "memory-test",

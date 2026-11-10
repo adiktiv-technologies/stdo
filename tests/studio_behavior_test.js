@@ -77,3 +77,38 @@ test('fetch failure explains how to reconnect',async () => {
   vm.runInContext(api,context);
   await assert.rejects(vm.runInContext("api('/api/workflows')",context),/Studio server unreachable/);
 });
+test('inspector tab order and toolbar match the layout contract',() => {
+  const tabs = [...html.matchAll(/data-tab="([^"]+)"/g)].map(match => match[1]);
+  assert.deepEqual(tabs,['requirements','edit','yaml','inspect']);
+  const toolbar = html.slice(html.indexOf('<header id="toolbar">'),html.indexOf('</header>'));
+  assert.match(toolbar,/<button id="save">Save<\/button>/);
+  assert.match(toolbar,/<button id="help" title="Help" aria-label="Help">\?<\/button>\s*<\/div>\s*$/);
+  assert.ok(toolbar.indexOf('id="help"') > toolbar.indexOf('id="run"'));
+  assert.match(html,/#help\{[^}]*width:32px;[^}]*height:32px;[^}]*border-radius:50%/);
+});
+test('requirements render three tables with statuses and metadata',() => {
+  class Element {
+    constructor(tag,text,cls) { this.tag=tag;this.text=text;this.cls=cls;this.children=[];this.dataset={}; }
+    append(...nodes) { this.children.push(...nodes); }
+    replaceChildren() { this.children=[]; }
+    setAttribute(name,value) { this[name]=value; }
+    walk() { return [this,...this.children.flatMap(node=>node.walk())]; }
+  }
+  const panel = new Element('div');
+  const context = vm.createContext({element:(...args)=>new Element(...args),$:()=>panel});
+  const render = html.slice(html.indexOf('function renderRequirements'),html.indexOf('async function save('));
+  vm.runInContext(render,context);
+  vm.runInContext(`renderRequirements({
+    binaries:[{name:'sh',sources:['step cmd'],installed:true,path:'/bin/sh'},
+      {name:'ffmpeg',sources:['shell script'],installed:false,path:null}],
+    models:['gemma4'],model_details:[{name:'gemma4',references:['write_script']}],
+    inputs:[{name:'output_mp4',type:'path',status:'output',value:'capsule.mp4'}],
+    note:'Static detection'
+  })`,context);
+  const tables = panel.walk().filter(node=>node.tag==='table');
+  assert.deepEqual(tables.map(node=>node['aria-label']),['CLI Binaries','Local AI Models (Ollama)','Workflow Inputs & Artifacts']);
+  const text = panel.walk().map(node=>node.text ?? node.textContent ?? '').join(' ');
+  for (const value of ['✓ Installed','✗ Missing','shell script','write_script','ollama pull gemma4','Output artifact','capsule.mp4']) {
+    assert.ok(text.includes(value),value);
+  }
+});

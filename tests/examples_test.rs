@@ -499,7 +499,7 @@ case " $* " in
   *' -stream_loop -1 -i ./screen recording.mov '*) printf 'recording\n' >> render-modes ;;
   *' color=c=0x0d1117:s=1920x1080:r=30 '*)
     case " $* " in
-      *' -filter_complex [1:a]showwaves=s=1920x1080:mode=p2p:rate=30:colors=0x58a6ff[fg];[0:v][fg]overlay=format=auto,format=yuv420p[v] -map [v] -map 1:a:0 '*)
+      *' -filter_complex [1:a]aformat=channel_layouts=mono,compand,showwaves=s=1920x1080:mode=cline:rate=30:scale=sqrt:colors=0x38bdf8[fg];[0:v][fg]overlay=format=auto,format=yuv420p[v] -map [v] -map 1:a:0 '*)
         printf 'waveform\n' >> render-modes ;;
       *) exit 1 ;;
     esac ;;

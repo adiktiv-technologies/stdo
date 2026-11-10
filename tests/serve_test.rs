@@ -105,6 +105,24 @@ impl Studio {
 #[test]
 fn studio_reports_requirements_and_saves_workspace_files() {
     let studio = Studio::start();
+    let (_, html) = studio.request("GET", "/", None, "");
+    let positions: Vec<_> = ["requirements", "edit", "yaml", "inspect"]
+        .iter()
+        .map(|name| html.find(&format!("data-tab=\"{name}\"")).unwrap())
+        .collect();
+    assert!(positions.windows(2).all(|pair| pair[0] < pair[1]));
+    assert!(html.contains("id=\"save\">Save</button>"));
+    assert!(html.contains("id=\"help\" title=\"Help\" aria-label=\"Help\">?</button>"));
+    for label in [
+        "Executable",
+        "Source",
+        "Resolved Path",
+        "Referenced By",
+        "Pull Command",
+        "Default / Current Value",
+    ] {
+        assert!(html.contains(label));
+    }
     let draft = json!({"workflow":{
         "version":"1.0","name":"requirements",
         "inputs":{"tts_model":{"type":"string","default":"phonon:latest"},"required":{"type":"path"}},
@@ -117,7 +135,11 @@ fn studio_reports_requirements_and_saves_workspace_files() {
         .iter()
         .any(|binary| binary["name"] == "ffmpeg"));
     assert_eq!(requirements["models"], json!(["phonon:latest"]));
-    assert_eq!(requirements["inputs"][0]["status"], "required");
+    assert!(requirements["inputs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|input| input["name"] == "required" && input["status"] == "required"));
     let mut file = draft;
     file["path"] = json!("examples/saved.yaml");
     let saved = studio.json("POST", "/api/file", Some(&file));

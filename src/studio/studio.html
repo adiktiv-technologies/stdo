@@ -56,10 +56,13 @@ main{display:grid;grid-template-columns:minmax(0,1fr) minmax(320px,29vw);height:
 .command-raw textarea{min-height:9em;resize:vertical}
 .command-raw textarea[aria-invalid=true]{border-color:var(--error)}
 .command-raw p{margin:5px 0;color:var(--error);font-size:12px}
-#requirements{padding:9px 14px;border-bottom:1px solid var(--line);max-height:190px;overflow:auto;font-size:12px}
-#requirements summary{cursor:pointer;font-weight:600}
-.requirement{display:block;margin-top:6px;overflow-wrap:anywhere}
-.requirement[data-ok=true]{color:var(--pipe)}.requirement[data-ok=false]{color:var(--error)}
+#help{width:32px;height:32px;min-width:32px;border-radius:50%;padding:0;display:inline-flex;align-items:center;justify-content:center;font-weight:700}
+.requirements-table{width:100%;border-collapse:collapse;font-size:12px;margin-bottom:16px}
+.requirements-table th,.requirements-table td{padding:7px 5px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line);overflow-wrap:anywhere}
+.requirements-table code{font:11px var(--mono);white-space:pre-wrap;overflow-wrap:anywhere}
+.requirements-scroll{overflow-x:auto}
+.requirement-status{white-space:nowrap;font-size:11px}.requirement-status[data-ok=true]{color:var(--pipe)}.requirement-status[data-ok=false]{color:var(--error)}
+.tabs button{padding:7px 4px;font-size:12px;min-width:0}
 #studio-dialog{width:min(660px,94vw);max-height:85dvh;overflow:auto;background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:20px}
 #studio-dialog::backdrop{background:#050a16bb}
 .dialog-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px;flex-wrap:wrap}
@@ -78,7 +81,7 @@ main{display:grid;grid-template-columns:minmax(0,1fr) minmax(320px,29vw);height:
     <button id="add-input">+ Input</button><button id="add-command">+ Command Step</button><button id="add-switch">+ Switch Step</button>
   </div>
   <div class="toolbar-group">
-    <button id="help">? Help</button><button id="validate">Validate (Doctor)</button><button id="save">💾 Save YAML</button><button id="save-as">Save As…</button><button id="run" class="primary">▶ Run Workflow</button>
+    <button id="validate">Validate (Doctor)</button><button id="save">Save</button><button id="save-as">Save As…</button><button id="run" class="primary">▶ Run Workflow</button><button id="help" title="Help" aria-label="Help">?</button>
   </div>
 </header>
 <main>
@@ -98,10 +101,10 @@ main{display:grid;grid-template-columns:minmax(0,1fr) minmax(320px,29vw);height:
     </div>
   </section>
   <aside id="yaml-panel" aria-label="Workflow inspector">
-    <details id="requirements" open><summary>Requirements</summary><div id="requirement-items">Load a workflow to inspect requirements.</div></details>
     <nav class="tabs" aria-label="Inspector views">
-      <button data-tab="edit" aria-selected="true">Edit</button><button data-tab="yaml" aria-selected="false">YAML</button><button data-tab="inspect" aria-selected="false">Run inspector</button>
+      <button data-tab="requirements" aria-selected="false">Requirements</button><button data-tab="edit" aria-selected="true">Edit</button><button data-tab="yaml" aria-selected="false">YAML</button><button data-tab="inspect" aria-selected="false">Run inspector</button>
     </nav>
+    <section id="requirements" class="pane" hidden><h2>Requirements</h2><div id="requirement-items">Load a workflow to inspect requirements.</div></section>
     <section id="edit" class="pane"></section>
     <section id="yaml-view" class="pane" hidden>
       <h2>Workflow YAML</h2><button id="apply-yaml">Apply to canvas</button>
@@ -1132,26 +1135,52 @@ function renderRequirements(data) {
   const panel = $('requirement-items');
   panel.replaceChildren();
   if (!data) { panel.textContent = 'Requirements will update when the draft is valid.'; return; }
-  for (const binary of data.binaries) {
-    const row = element('span',binary.name + (binary.installed ? ' ✓ installed · ' + binary.path : ' ✗ missing'),'requirement');
-    row.dataset.ok = String(binary.installed);
-    panel.append(row);
+  function table(title,headers,rows) {
+    panel.append(element('h3',title));
+    const scroll = element('div',undefined,'requirements-scroll');
+    const grid = element('table',undefined,'requirements-table');
+    grid.setAttribute('aria-label',title);
+    const head = element('thead');
+    const headings = element('tr');
+    for (const header of headers) {
+      const cell = element('th',header);
+      cell.scope = 'col';
+      headings.append(cell);
+    }
+    head.append(headings);
+    const body = element('tbody');
+    for (const cells of rows) {
+      const row = element('tr');
+      for (const value of cells) {
+        const cell = element('td');
+        cell.append(typeof value === 'string' ? element('span',value) : value);
+        row.append(cell);
+      }
+      body.append(row);
+    }
+    grid.append(head,body);
+    scroll.append(grid);
+    panel.append(scroll);
   }
-  for (const model of data.models) {
-    const code = element('input');
+  table('CLI Binaries',['Executable','Source','Status','Resolved Path'],data.binaries.map(binary => {
+    const badge = element('span',binary.installed ? '✓ Installed' : '✗ Missing','requirement-status');
+    badge.dataset.ok = String(binary.installed);
+    return [element('code',binary.name),(binary.sources || ['step cmd']).join(', '),badge,
+      element('code',binary.path || 'Install this executable and add it to PATH')];
+  }));
+  if (data.models.length) table('Local AI Models (Ollama)',['Model','Referenced By','Pull Command'],
+    data.models.map(model => {
+    const code = element('code');
     const token = /^[A-Za-z0-9_:./@-]+$/.test(model) ? model : "'" + model.replace(/'/g,"'\\''") + "'";
-    code.value = 'ollama pull ' + token;
-    code.readOnly = true;
-    code.setAttribute('aria-label','Pull model ' + model);
-    code.addEventListener('click',() => code.select());
-    panel.append(field('Ollama model · ' + model,code));
-  }
-  for (const input of data.inputs) {
-    const row = element('span',input.name + ' · ' + input.status +
-      (input.value == null ? '' : ' · ' + input.value),'requirement');
-    row.dataset.ok = String(!['required','missing'].includes(input.status));
-    panel.append(row);
-  }
+    code.textContent = 'ollama pull ' + token;
+    return [element('code',model),(data.model_details?.find(item => item.name === model)?.references || []).join(', '),code];
+  }));
+  table('Workflow Inputs & Artifacts',['Input','Type','Role','Default / Current Value'],data.inputs.map(input => [
+    element('code',input.name),input.type || '—',
+    (input.role || (input.status === 'output' ? 'Output artifact' : input.status === 'required' ? 'Required' : 'Optional')) +
+      (input.status === 'missing' ? ' · file missing' : ''),
+    element('code',input.value == null ? '—' : String(input.value))
+  ]));
   panel.append(element('p',data.note,'quiet'));
 }
 async function save(as = false) {
@@ -1485,7 +1514,7 @@ $('help').addEventListener('click',() => modal('Studio help',(dialog,finish) => 
     <tr><td>cache: true</td><td>Reuses captured output by content key. A piped consumer needs complete stdin for its key.</td></tr>
     <tr><td>parse_stdout: json | jsonl</td><td>Validates a JSON document or JSON Lines records. Templates use steps.id.json.</td></tr></table>
     <h3>Files &amp; shortcuts</h3>
-    <p>New file creates a draft. Save YAML quickly updates a saved file. Save As chooses a workspace filename and directory. Export local copy uses the browser picker when available. Delete file removes the saved YAML. Revert changes reloads the saved file. Validate (Doctor) checks the draft without saving.</p>
+    <p>New file creates a draft. Save quickly updates a saved file. Save As chooses a workspace filename and directory. Export local copy uses the browser picker when available. Delete file removes the saved YAML. Revert changes reloads the saved file. Validate (Doctor) checks the draft without saving.</p>
     <p>Dialog shortcuts use Tab to move focus, Enter to activate a focused button, and Esc to cancel. Click outside to close this help.</p>`;
   dialog.append(content,button('Close',() => finish(true)));
 }));
