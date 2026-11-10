@@ -1,6 +1,7 @@
 //! The offline Studio serves one bounded HTTP request per loopback connection.
 mod artifact;
 mod http;
+mod requirements;
 
 use std::{
     io,
@@ -163,6 +164,18 @@ impl Studio {
         match (request.method.as_str(), target) {
             ("GET", "/") => Ok(Response::html(HTML)),
             ("GET", "/api/workflows") => self.list().await,
+            ("GET", "/api/doctor") => {
+                let (workflow, _) = self.load(&http::query_path(query)?).await?;
+                Ok(Response::json(requirements::summary(&workflow, &[])))
+            }
+            ("POST", "/api/doctor") => {
+                let request: Run = decode(&request.body)?;
+                let workflow = self.run_workflow(request.draft).await?;
+                Ok(Response::json(requirements::summary(
+                    &workflow,
+                    &request.inputs,
+                )))
+            }
             ("GET", "/api/workflow") => {
                 let relative = http::query_path(query)?;
                 let (workflow, yaml) = self.load(&relative).await?;
@@ -177,7 +190,7 @@ impl Studio {
                 let (workflow, yaml) = decode::<Draft>(&request.body)?.parse()?;
                 Ok(inspect(&workflow, yaml))
             }
-            ("POST", "/api/workflow") => {
+            ("POST", "/api/workflow" | "/api/file") => {
                 let mut draft = decode::<Draft>(&request.body)?;
                 let relative = draft
                     .path
@@ -201,7 +214,7 @@ impl Studio {
             (
                 _,
                 "/" | "/api/workflows" | "/api/workflow" | "/api/workflow/meta" | "/api/preview"
-                | "/api/run" | "/api/run/stream" | "/api/artifact",
+                | "/api/run" | "/api/run/stream" | "/api/artifact" | "/api/doctor" | "/api/file",
             ) => Err(Problem::new(
                 "405 Method Not Allowed",
                 "Method not allowed for this endpoint",
@@ -212,6 +225,7 @@ impl Studio {
 
     async fn list(&self) -> Result<Response, Problem> {
         let mut paths = Vec::new();
+        let mut directories = Vec::new();
         for directory in [self.root.clone(), self.root.join("examples")] {
             match fs::symlink_metadata(&directory).await {
                 Ok(metadata) if metadata.is_dir() => {}
@@ -219,6 +233,11 @@ impl Studio {
                 Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
                 Err(error) => return Err(Problem::io(error)),
             }
+            directories.push(if directory == self.root {
+                "."
+            } else {
+                "examples"
+            });
             let mut entries = fs::read_dir(directory).await.map_err(Problem::io)?;
             while let Some(entry) = entries.next_entry().await.map_err(Problem::io)? {
                 let path = entry.path();
@@ -243,7 +262,7 @@ impl Studio {
             .or_else(|| paths.iter().find(|path| *path == "stdo.yaml"))
             .or_else(|| paths.first());
         Ok(Response::json(
-            json!({"workflows": paths, "selected": selected}),
+            json!({"workflows": paths, "selected": selected, "directories": directories}),
         ))
     }
 
@@ -443,7 +462,8 @@ fn inspect(workflow: &Workflow, yaml: String) -> Response {
         .or_else(|| doctor::check(workflow).err().map(|error| error.to_string()));
     Response::json(json!({
         "workflow": workflow, "sha256": sha256(yaml.as_bytes()), "yaml": yaml, "layers": layers, "graph_error": graph_error,
-        "doctor": {"ok": doctor_error.is_none(), "error": doctor_error}
+        "doctor": {"ok": doctor_error.is_none(), "error": doctor_error},
+        "requirements": requirements::summary(workflow,&[])
     }))
 }
 
@@ -616,6 +636,29 @@ mod tests {
         let data: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert_eq!(data["layers"], json!([[0], [1], [2], [3], [4]]));
         assert_eq!(data["doctor"]["ok"], true);
+        assert!(data["requirements"]["binaries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|binary| binary["name"] == "sh" && binary["installed"] == true));
+
+        let requirements = json!({"workflow":{
+            "version":"1.0","name":"requirements",
+            "inputs":{"llm_model":{"type":"string","default":"gemma4"},"needed":{"type":"path"}},
+            "steps":[{"id":"render","cmd":["sh","-c","ffmpeg -version; jq --version; ollama run gemma4"]}]
+        }});
+        let body = requirements.to_string();
+        let (_, response) = exchange(&studio,format!(
+            "POST /api/doctor HTTP/1.1\r\nHost: 127.0.0.1:8080\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",body.len()
+        )).await;
+        let requirements: serde_json::Value = serde_json::from_str(&response).unwrap();
+        assert!(requirements["binaries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|binary| binary["name"] == "ffmpeg"));
+        assert_eq!(requirements["models"], json!(["gemma4"]));
+        assert_eq!(requirements["inputs"][0]["status"], "required");
 
         let body = json!({"workflow": {
             "version": "1.0", "name": "memory-test",

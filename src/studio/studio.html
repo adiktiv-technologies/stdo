@@ -56,6 +56,15 @@ main{display:grid;grid-template-columns:minmax(0,1fr) minmax(320px,29vw);height:
 .command-raw textarea{min-height:9em;resize:vertical}
 .command-raw textarea[aria-invalid=true]{border-color:var(--error)}
 .command-raw p{margin:5px 0;color:var(--error);font-size:12px}
+#requirements{padding:9px 14px;border-bottom:1px solid var(--line);max-height:190px;overflow:auto;font-size:12px}
+#requirements summary{cursor:pointer;font-weight:600}
+.requirement{display:block;margin-top:6px;overflow-wrap:anywhere}
+.requirement[data-ok=true]{color:var(--pipe)}.requirement[data-ok=false]{color:var(--error)}
+#studio-dialog{width:min(660px,94vw);max-height:85dvh;overflow:auto;background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:20px}
+#studio-dialog::backdrop{background:#050a16bb}
+.dialog-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px;flex-wrap:wrap}
+#studio-dialog h2{margin-top:0}#studio-dialog h3{margin-bottom:6px}
+#studio-dialog table{border-collapse:collapse;font-size:12px}#studio-dialog td,#studio-dialog th{border:1px solid var(--line);padding:7px;text-align:left}
 </style>
 </head>
 <body>
@@ -63,13 +72,13 @@ main{display:grid;grid-template-columns:minmax(0,1fr) minmax(320px,29vw);height:
   <div class="brand">stdo <span>Studio</span></div>
   <div class="toolbar-group">
     <select id="files" aria-label="Workflow file"></select>
-    <button id="new-file">New file</button><button id="delete-file" class="danger">Delete file</button>
+    <button id="new-file">New file</button><button id="delete-file" class="danger">Delete file</button><button id="revert">Revert changes</button>
   </div>
   <div class="toolbar-group">
     <button id="add-input">+ Input</button><button id="add-command">+ Command Step</button><button id="add-switch">+ Switch Step</button>
   </div>
   <div class="toolbar-group">
-    <button id="validate">Validate (Doctor)</button><button id="save">💾 Save YAML</button><button id="run" class="primary">▶ Run Workflow</button>
+    <button id="help">? Help</button><button id="validate">Validate (Doctor)</button><button id="save">💾 Save YAML</button><button id="save-as">Save As…</button><button id="run" class="primary">▶ Run Workflow</button>
   </div>
 </header>
 <main>
@@ -89,6 +98,7 @@ main{display:grid;grid-template-columns:minmax(0,1fr) minmax(320px,29vw);height:
     </div>
   </section>
   <aside id="yaml-panel" aria-label="Workflow inspector">
+    <details id="requirements" open><summary>Requirements</summary><div id="requirement-items">Load a workflow to inspect requirements.</div></details>
     <nav class="tabs" aria-label="Inspector views">
       <button data-tab="edit" aria-selected="true">Edit</button><button data-tab="yaml" aria-selected="false">YAML</button><button data-tab="inspect" aria-selected="false">Run inspector</button>
     </nav>
@@ -107,6 +117,7 @@ main{display:grid;grid-template-columns:minmax(0,1fr) minmax(320px,29vw);height:
     <div id="notice" role="status" aria-live="polite">Loading workflows…</div>
   </aside>
 </main>
+<dialog id="studio-dialog" aria-labelledby="dialog-title"></dialog>
 <script>
 'use strict';
 const $ = id => document.getElementById(id);
@@ -151,7 +162,11 @@ async function api(path, method = 'GET', body) {
     options.headers = {'Content-Type': 'application/json'};
     options.body = JSON.stringify(body);
   }
-  const response = await fetch(path, options);
+  let response;
+  try { response = await fetch(path, options); }
+  catch {
+    throw new TypeError('Studio server unreachable — make sure "stdo serve" is running');
+  }
   const result = await response.json();
   if (!response.ok) {
     const error = new Error(result.error || 'Studio request failed');
@@ -189,6 +204,7 @@ function replaceFile(path, data, saved) {
   state.raw = false;
   state.saved = saved;
   state.diskHash = saved ? data.sha256 : null;
+  renderRequirements(data.requirements);
   diskNotice('');
   state.dirty = !saved;
   $('yaml').value = data.yaml || '';
@@ -207,10 +223,12 @@ async function loadFile(path) {
   try {
     const data = await api(fileUrl(path));
     if (request === state.fileRequest) replaceFile(path, data, true);
+    return true;
   } catch (error) {
     if (request !== state.fileRequest) return;
     if (error.status === 404) replaceFile(path, {workflow:empty()}, false);
     else { refreshFiles(); notice(error.message, 'error'); }
+    return error.status === 404;
   } finally {
     if (request === state.fileRequest) state.loading = false;
   }
@@ -225,7 +243,7 @@ function diskNotice(message) {
   $('disk-notice').hidden = !message;
 }
 async function pollDisk() {
-  if (!state.saved || state.loading || state.polling || $('save').disabled || $('run').disabled) return;
+  if (!state.saved || state.loading || state.polling || $('studio-dialog').open || $('save').disabled || $('run').disabled) return;
   state.polling = true;
   const path = state.path;
   const revision = state.revision;
@@ -236,7 +254,13 @@ async function pollDisk() {
   try {
     const meta = await api('/api/workflow/meta?path=' + encodeURIComponent(path));
     if (!current()) return;
-    if (meta.sha256 === state.diskHash) return diskNotice('');
+    if (meta.sha256 === state.diskHash) {
+      try {
+        const requirements = await api('/api/doctor','POST',{...payload(),inputs:[...inputOverrides].map(([name,value]) => name+'='+value)});
+        if (current()) renderRequirements(requirements);
+      } catch { /* Draft validation errors are shown by the preview request. */ }
+      return diskNotice('');
+    }
     if (state.dirty || editing()) return diskNotice('This file changed on disk. Your draft is still open.');
     const data = await api(fileUrl(path));
     if (!current() || revision !== state.revision || state.dirty || editing() ||
@@ -268,6 +292,7 @@ function updatePreview() {
         $('yaml').value = data.yaml;
       }
       updateLayout(data.layers);
+      renderRequirements(data.requirements);
       if (!state.drag) render(raw);
       notice(data.graph_error || 'Draft updated', data.graph_error ? 'error' : '');
     } catch (error) {
@@ -973,20 +998,178 @@ function applyPreview(data) {
   $('yaml').value = data.yaml;
   render();
 }
-function discardDraft() {
-  return !state.dirty || confirm('Discard the unsaved workflow changes?');
+function modal(title,build) {
+  const dialog = $('studio-dialog');
+  if (dialog.open) return Promise.resolve(null);
+  const previous = document.activeElement;
+  return new Promise(resolve => {
+    const heading = element('h2',title);
+    heading.id = 'dialog-title';
+    dialog.replaceChildren(heading);
+    const finish = value => { dialog.close(); resolve(value); previous?.focus(); };
+    dialog.oncancel = event => { event.preventDefault(); finish(null); };
+    dialog.onclick = event => {
+      const box = dialog.getBoundingClientRect();
+      if (event.target === dialog && (event.clientX < box.left || event.clientX > box.right ||
+          event.clientY < box.top || event.clientY > box.bottom)) finish(null);
+    };
+    build(dialog,finish);
+    dialog.showModal();
+  });
 }
-async function save() {
+function confirmAction(title,message,label) {
+  return modal(title,(dialog,finish) => {
+    dialog.append(element('p',message));
+    const actions = element('div',undefined,'dialog-actions');
+    actions.append(button('Cancel',() => finish(false)),button(label,() => finish(true),'primary'));
+    dialog.append(actions);
+  });
+}
+async function discardDraft() {
+  if (!state.dirty) return true;
+  if (!await confirmAction('Unsaved changes','Discard the unsaved workflow changes?','Discard changes')) return false;
+  state.dirty = false;
+  return true;
+}
+async function switchFile(path) {
+  if (state.loading || $('run').disabled) return;
+  const dirty = state.dirty;
+  if (!await discardDraft()) { refreshFiles(); return; }
+  if (await loadFile(path)) inputOverrides.clear();
+  else state.dirty = dirty;
+}
+async function choosePath(title,suggested) {
+  let files;
+  try { files = await api('/api/workflows'); }
+  catch (error) { notice(error.message,'error'); return null; }
+  state.paths = files.workflows;
+  return modal(title,(dialog,finish) => {
+    const directory = element('select');
+    directory.setAttribute('aria-label','Workspace directory');
+    for (const name of files.directories || ['.','examples']) {
+      const option = element('option',name);
+      option.value = name;
+      directory.append(option);
+    }
+    const path = element('input');
+    path.value = suggested;
+    path.setAttribute('aria-label','Workflow file path');
+    const entries = element('div');
+    const error = element('p','', 'danger');
+    function browse() {
+      entries.replaceChildren();
+      for (const file of files.workflows) {
+        const parent = file.includes('/') ? file.slice(0,file.lastIndexOf('/')) : '.';
+        if (parent === directory.value) entries.append(button(file,() => {path.value = file;}));
+      }
+    }
+    directory.value = suggested.includes('/') ? suggested.slice(0,suggested.lastIndexOf('/')) : '.';
+    directory.addEventListener('change',() => {
+      const name = path.value.split('/').pop() || 'workflow.yaml';
+      path.value = (directory.value === '.' ? '' : directory.value + '/') + name;
+      browse();
+    });
+    browse();
+    const actions = element('div',undefined,'dialog-actions');
+    actions.append(button('Cancel',() => finish(null)),button('Choose path',() => {
+      const value = path.value.trim();
+      if (!/\.ya?ml$/i.test(value) || value.startsWith('/') || value.split('/').some(part => part === '..')) {
+        error.textContent = 'Choose a .yaml or .yml path inside the workspace.';
+        return;
+      }
+      finish(value);
+    },'primary'));
+    if (window.showSaveFilePicker && title !== 'New file') {
+      actions.prepend(button('Export local copy…',async () => {
+        try {
+          const handle = await window.showSaveFilePicker({
+            suggestedName:path.value.split('/').pop(),
+            types:[{description:'Workflow YAML',accept:{'application/yaml':['.yaml','.yml']}}]
+          });
+          const data = await api('/api/preview','POST',payload());
+          if (data.graph_error) throw new Error(data.graph_error);
+          const writable = await handle.createWritable();
+          try { await writable.write(data.yaml); await writable.close(); }
+          catch (failure) { await writable.abort().catch(() => {}); throw failure; }
+          error.textContent = 'Copy exported. Choose a workspace path to track it in Studio.';
+        } catch (failure) { if (failure.name !== 'AbortError') error.textContent = failure.message; }
+      }));
+    }
+    dialog.append(element('p','Choose a workspace directory or enter a relative path.'),
+      field('Directory',directory),entries,field('Filename / path',path),error,actions);
+  });
+}
+async function newFile() {
+  if (state.loading || $('run').disabled) return;
+  const path = await choosePath('New file','new-workflow.yaml');
+  if (!path) return;
+  if (state.paths.includes(path)) {
+    notice('That file already exists. Choose it from the file selector.','error');
+    return;
+  }
+  if (!await discardDraft()) return;
+  inputOverrides.clear();
+  replaceFile(path,{workflow:empty()},false);
+}
+async function deleteFile() {
+  if (!state.saved || state.loading || $('run').disabled) return;
+  const path = state.path;
+  if (!await confirmAction('Delete file','Delete ' + path + ' from disk?' +
+      (state.dirty ? ' Unsaved changes will be discarded.' : ''),'Delete file')) return;
+  const dirty = state.dirty;
+  state.dirty = false;
+  state.loading = true;
+  try {
+    await api(fileUrl(path),'DELETE');
+    state.paths = state.paths.filter(candidate => candidate !== path);
+    inputOverrides.clear();
+    replaceFile('new-workflow.yaml',{workflow:empty()},false);
+    if (state.paths.length) await loadFile(state.paths[0]);
+  } catch (error) { state.dirty = dirty; notice(error.message,'error'); }
+  finally { state.loading = false; }
+}
+function renderRequirements(data) {
+  const panel = $('requirement-items');
+  panel.replaceChildren();
+  if (!data) { panel.textContent = 'Requirements will update when the draft is valid.'; return; }
+  for (const binary of data.binaries) {
+    const row = element('span',binary.name + (binary.installed ? ' ✓ installed · ' + binary.path : ' ✗ missing'),'requirement');
+    row.dataset.ok = String(binary.installed);
+    panel.append(row);
+  }
+  for (const model of data.models) {
+    const code = element('input');
+    const token = /^[A-Za-z0-9_:./@-]+$/.test(model) ? model : "'" + model.replace(/'/g,"'\\''") + "'";
+    code.value = 'ollama pull ' + token;
+    code.readOnly = true;
+    code.setAttribute('aria-label','Pull model ' + model);
+    code.addEventListener('click',() => code.select());
+    panel.append(field('Ollama model · ' + model,code));
+  }
+  for (const input of data.inputs) {
+    const row = element('span',input.name + ' · ' + input.status +
+      (input.value == null ? '' : ' · ' + input.value),'requirement');
+    row.dataset.ok = String(!['required','missing'].includes(input.status));
+    panel.append(row);
+  }
+  panel.append(element('p',data.note,'quiet'));
+}
+async function save(as = false) {
   if (!state.workflow || state.loading || !validCommandDraft()) return;
-  if (!$('disk-notice').hidden && !confirm('Replace the externally changed file with this draft?')) return;
+  const original = state.path;
+  const path = as || !state.saved ? await choosePath('Save As',state.path) : state.path;
+  if (!path) return;
+  if ((path !== original && state.paths.includes(path)) || (path === original && !$('disk-notice').hidden)) {
+    if (!await confirmAction('Replace file','Replace ' + path + ' with this draft?','Replace file')) return;
+  }
   const control = $('save');
   control.disabled = true;
-  const path = state.path;
   const revision = state.revision;
   try {
-    const data = await api('/api/workflow','POST',{path,...payload()});
+    const data = await api('/api/file','POST',{path,...payload()});
     if (!state.paths.includes(path)) state.paths.push(path);
-    if (path === state.path && revision === state.revision) {
+    if (original === state.path && revision === state.revision) {
+      state.path = path;
       clearTimeout(state.timer);
       state.revision++;
       applyPreview(data);
@@ -1245,7 +1428,8 @@ async function run() {
       return false;
     });
   } catch (error) {
-    if (current()) notice(error.message,'error');
+    if (current()) notice(error instanceof TypeError ?
+      'Studio server unreachable — make sure "stdo serve" is running' : error.message,'error');
   } finally {
     clearInterval(ticker);
     progress.hidden = true;
@@ -1265,28 +1449,9 @@ async function run() {
 for (const control of document.querySelectorAll('[data-tab]')) {
   control.addEventListener('click',() => tab(control.dataset.tab));
 }
-$('files').addEventListener('change',event => {
-  if (!discardDraft()) { refreshFiles(); return; }
-  inputOverrides.clear();
-  loadFile(event.target.value);
-});
-$('new-file').addEventListener('click',() => {
-  if (!discardDraft()) return;
-  const path = prompt('Workflow file path', 'new-workflow.yaml');
-  if (!path) return;
-  inputOverrides.clear();
-  loadFile(path);
-});
-$('delete-file').addEventListener('click',async () => {
-  const path = state.path;
-  if (!state.saved || !confirm('Delete ' + path + ' from disk?')) return;
-  try {
-    await api(fileUrl(path),'DELETE');
-    state.paths = state.paths.filter(candidate => candidate !== path);
-    inputOverrides.clear();
-    await loadFile(state.paths[0] || 'stdo.yaml');
-  } catch (error) { notice(error.message,'error'); }
-});
+$('files').addEventListener('change',event => switchFile(event.target.value));
+$('new-file').addEventListener('click',newFile);
+$('delete-file').addEventListener('click',deleteFile);
 $('layout').addEventListener('click',() => {
   state.pinned.clear();
   state.positions.clear();
@@ -1296,7 +1461,34 @@ $('add-input').addEventListener('click',addInput);
 $('add-command').addEventListener('click',() => addStep('command'));
 $('add-switch').addEventListener('click',() => addStep('switch'));
 $('validate').addEventListener('click',() => validate());
-$('save').addEventListener('click',save);
+$('save').addEventListener('click',() => save());
+$('save-as').addEventListener('click',() => save(true));
+$('revert').addEventListener('click',async () => {
+  if (!state.saved || state.loading || $('run').disabled) return;
+  await switchFile(state.path);
+});
+$('help').addEventListener('click',() => modal('Studio help',(dialog,finish) => {
+  const content = element('div');
+  content.innerHTML = `
+    <h3>Canvas &amp; wiring</h3>
+    <p>Add command or switch steps from the toolbar. Drag a card by its header. Choose a wire type, click an output port, then the destination input port. Click a wire to remove it.</p>
+    <p><strong>Pipe</strong> connects stdout (fd 1) to stdin (fd 0) through pipe_from.
+    <strong>Template</strong> waits for output and injects buffered text or JSON, such as {{ steps.example.stdout }}.
+    <strong>Switch branch</strong> routes to a target chosen by a condition.</p>
+    <h3>Visual Command Builder</h3>
+    <p>Each row is one decoded argument. Use code blocks for scripts with real line breaks and quotes. In sh -c, argument #2 is the script, #3 binds $0 (the script label), #4 binds $1, and #5 binds $2. Pass values as arguments and quote "$1" inside the script.</p>
+    <h3>Execution modes</h3>
+    <table><tr><th>Setting</th><th>Behavior</th></tr>
+    <tr><td>pipe_mode: concurrent</td><td>Eligible producer and consumer run together.</td></tr>
+    <tr><td>pipe_mode: atomic</td><td>Waits for validated, captured output and producer success. Consumer writes remain in place if the consumer later fails.</td></tr>
+    <tr><td>capture_stdout: false</td><td>Streams without retaining stdout. Requires live consumers and prevents output replay or caching.</td></tr>
+    <tr><td>cache: true</td><td>Reuses captured output by content key. A piped consumer needs complete stdin for its key.</td></tr>
+    <tr><td>parse_stdout: json | jsonl</td><td>Validates a JSON document or JSON Lines records. Templates use steps.id.json.</td></tr></table>
+    <h3>Files &amp; shortcuts</h3>
+    <p>New file creates a draft. Save YAML quickly updates a saved file. Save As chooses a workspace filename and directory. Export local copy uses the browser picker when available. Delete file removes the saved YAML. Revert changes reloads the saved file. Validate (Doctor) checks the draft without saving.</p>
+    <p>Dialog shortcuts use Tab to move focus, Enter to activate a focused button, and Esc to cancel. Click outside to close this help.</p>`;
+  dialog.append(content,button('Close',() => finish(true)));
+}));
 $('run').addEventListener('click',run);
 $('apply-yaml').addEventListener('click',() => validate(true));
 $('yaml').addEventListener('input',() => {

@@ -103,6 +103,35 @@ impl Studio {
 }
 
 #[test]
+fn studio_reports_requirements_and_saves_workspace_files() {
+    let studio = Studio::start();
+    let draft = json!({"workflow":{
+        "version":"1.0","name":"requirements",
+        "inputs":{"tts_model":{"type":"string","default":"phonon:latest"},"required":{"type":"path"}},
+        "steps":[{"id":"check","cmd":["sh","-c","ffmpeg -version; jq --version"]}]
+    }});
+    let requirements = studio.json("POST", "/api/doctor", Some(&draft));
+    assert!(requirements["binaries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|binary| binary["name"] == "ffmpeg"));
+    assert_eq!(requirements["models"], json!(["phonon:latest"]));
+    assert_eq!(requirements["inputs"][0]["status"], "required");
+    let mut file = draft;
+    file["path"] = json!("examples/saved.yaml");
+    let saved = studio.json("POST", "/api/file", Some(&file));
+    assert_eq!(saved["workflow"]["name"], "requirements");
+    assert!(studio.root.join("examples/saved.yaml").is_file());
+    let listing = studio.json("GET", "/api/workflows", None);
+    assert!(listing["workflows"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("examples/saved.yaml")));
+    assert_eq!(listing["directories"], json!([".", "examples"]));
+}
+
+#[test]
 fn studio_serves_mp4_byte_ranges() {
     let studio = Studio::start();
     fs::write(studio.root.join("capsule.mp4"), b"\0\0\0\x0cftypisom").unwrap();
