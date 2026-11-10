@@ -1,6 +1,6 @@
 [package]
 name = "stdo"
-version = "0.0.1"
+version = "0.1.0"
 edition = "2021"
 description = "⚡ Standard I/O Orchestrator — Zero-network Unix DAG workflow engine in Rust with an embedded Studio UI."
 license = "Apache-2.0"

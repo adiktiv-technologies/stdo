@@ -1,0 +1,26 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+## [0.1.0](https://github.com/adiktiv-technologies/stdo/compare/v0.0.1...v0.1.0) - 2026-11-10
+
+### Added
+
+- *(examples)* [**breaking**] complete Phase 1 DAG engine milestone with runnable workflow gallery ([#5](https://github.com/adiktiv-technologies/stdo/pull/5))
+- *(engine)* execute DAGs with monitored pipes and PID reporting ([#4](https://github.com/adiktiv-technologies/stdo/pull/4))
+- *(dag)* scaffold the Phase 1 workflow engine ([#3](https://github.com/adiktiv-technologies/stdo/pull/3))
+
+### Fixed
+
+- *(ci)* format code with rustfmt and resolve clippy lints
+
+### Other
+
+- *(repo)* formalize governance and release automation ([#1](https://github.com/adiktiv-technologies/stdo/pull/1))
+- add CI and release workflows; create AGENTS.md for architectural guidelines
+- update README.md for improved clarity and structure; add .gitignore entries
