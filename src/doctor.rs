@@ -18,7 +18,11 @@ use crate::{
 
 /// Validates the workflow and checks each declared command without spawning it.
 pub fn check(workflow: &Workflow) -> Result<Graph, Error> {
-    let graph = Graph::build(workflow)?;
+    check_with_force(workflow, false)
+}
+
+pub fn check_with_force(workflow: &Workflow, force: bool) -> Result<Graph, Error> {
+    let graph = Graph::build_with_force(workflow, force)?;
     let inputs: BTreeMap<_, &Value> = workflow
         .inputs
         .iter()

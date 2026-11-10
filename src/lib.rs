@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 pub mod cli;
 pub mod dag;
 pub mod doctor;

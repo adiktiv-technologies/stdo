@@ -17,4 +17,29 @@ pub enum Error {
     },
     #[error("required executables unavailable: {}", .0.join(", "))]
     MissingExecutables(Vec<String>),
+    #[error("graph safety limits exceeded (steps: {steps}/{max_steps}, depth: {depth}/{max_depth}, max_width: {max_width}/{max_layer_width}); pass --force to bypass")]
+    GraphLimitExceeded {
+        steps: usize,
+        depth: usize,
+        max_width: usize,
+        max_steps: usize,
+        max_depth: usize,
+        max_layer_width: usize,
+    },
+    #[error("step {step:?} exceeded the memory limit of {limit_bytes} bytes")]
+    MemoryLimitExceeded { step: String, limit_bytes: usize },
+    #[error("process I/O failed for step {step:?}: {source}")]
+    Process { step: String, source: io::Error },
+    #[error("step {step:?} failed with {status}")]
+    Exit {
+        step: String,
+        status: std::process::ExitStatus,
+    },
+    #[error("step {step:?} produced invalid JSON: {source}")]
+    Json {
+        step: String,
+        source: serde_json::Error,
+    },
+    #[error("could not write workflow output: {0}")]
+    WriteOutput(io::Error),
 }

@@ -15,12 +15,15 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Command {
-    /// Execute a workflow DAG (in development).
+    /// Execute a workflow DAG.
     Run {
         #[arg(default_value = "stdo.yaml")]
         file: PathBuf,
         #[arg(short, long, value_name = "KEY=VALUE")]
         input: Vec<String>,
+        /// Bypass graph size limits.
+        #[arg(long)]
+        force: bool,
     },
     /// Launch the offline Studio UI (in development).
     Serve {
@@ -33,5 +36,8 @@ pub enum Command {
     Doctor {
         #[arg(default_value = "stdo.yaml")]
         file: PathBuf,
+        /// Bypass graph size limits.
+        #[arg(long)]
+        force: bool,
     },
 }
