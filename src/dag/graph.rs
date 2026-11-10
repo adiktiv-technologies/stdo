@@ -15,9 +15,44 @@ pub const MAX_LAYER_WIDTH: usize = 16;
 pub struct Graph {
     pub layers: Vec<Vec<usize>>,
     pub(crate) dependencies: Vec<BTreeSet<usize>>,
+    stream_sources: Vec<Option<usize>>,
+}
+
+pub(crate) struct ExecutionPlan {
+    pub groups: Vec<Vec<(usize, usize)>>,
+    pub live_sources: Vec<Option<usize>>,
 }
 
 impl Graph {
+    pub(crate) fn execution_plan(&self, workflow: &Workflow, no_cache: bool) -> ExecutionPlan {
+        let mut groups = Vec::<Vec<_>>::new();
+        let mut group_of = vec![0; workflow.steps.len()];
+        let mut live_sources = vec![None; workflow.steps.len()];
+        for (layer, indices) in self.layers.iter().enumerate() {
+            for &index in indices {
+                // A cache key for a consumer needs the complete stdin.
+                let source = self.stream_sources[index].filter(|_| {
+                    matches!(&workflow.steps[index].kind, StepKind::Command(step) if no_cache || !step.cache)
+                });
+                let group = self.dependencies[index]
+                    .iter()
+                    .map(|&dependency| {
+                        group_of[dependency] + usize::from(Some(dependency) != source)
+                    })
+                    .max()
+                    .unwrap_or(0);
+                group_of[index] = group;
+                live_sources[index] = source.filter(|&source| group_of[source] == group);
+                groups.resize_with(groups.len().max(group + 1), Vec::new);
+                groups[group].push((layer + 1, index));
+            }
+        }
+        ExecutionPlan {
+            groups,
+            live_sources,
+        }
+    }
+
     pub fn build(workflow: &Workflow) -> Result<Self, Error> {
         Self::build_with_force(workflow, false)
     }
@@ -42,6 +77,7 @@ impl Graph {
 
         let environment = template::environment();
         let mut dependencies = vec![BTreeSet::new(); workflow.steps.len()];
+        let mut stream_sources = vec![None; workflow.steps.len()];
         for (index, step) in workflow.steps.iter().enumerate() {
             let location = format!("step {:?}", step.id);
             let templates = match &step.kind {
@@ -63,7 +99,7 @@ impl Graph {
                                 "{location} must pipe from a command step"
                             )));
                         }
-                        dependencies[index].insert(source);
+                        stream_sources[index] = Some(source);
                     }
                     command.cmd.iter().chain(&command.stdin).map(String::as_str)
                 }
@@ -93,6 +129,12 @@ impl Graph {
                     &indices,
                     &mut dependencies[index],
                 )?;
+            }
+            if let Some(source) = stream_sources[index] {
+                if !dependencies[index].insert(source) {
+                    // A template dependency on the same producer is still a barrier.
+                    stream_sources[index] = None;
+                }
             }
         }
 
@@ -128,6 +170,7 @@ impl Graph {
         Ok(Self {
             layers,
             dependencies,
+            stream_sources,
         })
     }
 }
@@ -221,8 +264,12 @@ mod tests {
 
     #[test]
     fn groups_readme_steps_into_parallel_layers() {
-        let graph = Graph::build(&readme_workflow()).unwrap();
+        let workflow = readme_workflow();
+        let graph = Graph::build(&workflow).unwrap();
         assert_eq!(graph.layers, [vec![0, 1], vec![2], vec![3], vec![4, 5]]);
+        let plan = graph.execution_plan(&workflow, false);
+        assert_eq!(plan.live_sources[4], None);
+        assert_eq!(plan.groups.last().unwrap(), &[(4, 4), (4, 5)]);
     }
 
     #[test]
@@ -240,7 +287,12 @@ steps:
 "#,
         )
         .unwrap();
-        assert_eq!(Graph::build(&workflow).unwrap().layers, [vec![1], vec![0]]);
+        let graph = Graph::build(&workflow).unwrap();
+        assert_eq!(graph.layers, [vec![1], vec![0]]);
+        assert_eq!(
+            graph.execution_plan(&workflow, false).groups,
+            [vec![(1, 1)], vec![(2, 0)]]
+        );
     }
 
     #[test]

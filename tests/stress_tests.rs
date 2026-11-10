@@ -34,7 +34,7 @@ steps:
     assert!(output.stdout.is_empty());
     assert!(report.contains("invalid JSONL at line 3"), "{report}");
     assert_process(&report, "emit", "Killed");
-    assert!(!report.contains("step \"downstream\""), "{report}");
+    assert!(report.contains("step \"downstream\""), "{report}");
 }
 
 struct WorkflowFile(PathBuf);
