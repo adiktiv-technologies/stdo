@@ -11,7 +11,7 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  check-and-test:
+  platform-checks:
     name: Check, Clippy & Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
@@ -19,7 +19,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -34,3 +34,14 @@ jobs:
           ls -lh target/release/stdo
       - name: Run tests
         run: cargo test --verbose
+
+  check-and-test:
+    name: check-and-test
+    needs: platform-checks
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require all platform checks to pass
+        env:
+          PLATFORM_RESULT: ${{ needs.platform-checks.result }}
+        run: test "$PLATFORM_RESULT" = success

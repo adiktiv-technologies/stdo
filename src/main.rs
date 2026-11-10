@@ -1,6 +1,7 @@
 use std::env;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+const WIP_NOTICE: &str = "[WIP - Phase 1 DAG engine in progress]";
 
 fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
@@ -10,9 +11,11 @@ fn main() {
             println!("stdo {VERSION}");
         }
         Some("run") => {
+            eprintln!("{WIP_NOTICE}");
             println!("⚡ stdo v{VERSION} — Executing workflow...");
         }
         Some("serve") => {
+            eprintln!("{WIP_NOTICE}");
             println!(
                 "⚡ stdo v{VERSION} — Embedded Studio UI starting on http://127.0.0.1:8080 (100% Offline)"
             );

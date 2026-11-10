@@ -1,0 +1,11 @@
+[workspace]
+release_always = false
+release_commits = '^(feat|fix|perf)(\([^()]+\))?!?: '
+features_always_increment_minor = false
+
+[[package]]
+name = "stdo"
+changelog_update = true
+git_release_enable = true
+git_tag_name = "v{{ version }}"
+publish = true
