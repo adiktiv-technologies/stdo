@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1](https://github.com/adiktiv-technologies/stdo/compare/v0.5.0...v0.5.1) - 2026-11-10
+
+### Added
+
+- *(examples)* add Ollama Gemma 4 + Phonon speech, local AI triage, and generic HTTP API workflows ([#22](https://github.com/adiktiv-technologies/stdo/pull/22))
+
+### Other
+
+- *(benchmarks)* add parallel Bash baseline, v0.5.0 provenance, and mode trade-off matrix ([#21](https://github.com/adiktiv-technologies/stdo/pull/21))
+
 ## [0.5.0](https://github.com/adiktiv-technologies/stdo/compare/v0.4.0...v0.5.0) - 2026-11-10
 
 ### Added
