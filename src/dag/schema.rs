@@ -1,11 +1,11 @@
 use std::{collections::BTreeMap, path::Path};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::error::Error;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Workflow {
     pub version: String,
@@ -31,7 +31,7 @@ impl Workflow {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Input {
     #[serde(rename = "type")]
@@ -42,8 +42,9 @@ pub struct Input {
     pub values: Vec<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum InputKind {
     String,
     Path,
@@ -52,7 +53,7 @@ pub enum InputKind {
     Boolean,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct Step {
     pub id: String,
     pub name: Option<String>,
@@ -60,14 +61,15 @@ pub struct Step {
     pub kind: StepKind,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(untagged)]
+#[non_exhaustive]
 pub enum StepKind {
     Switch(SwitchStep),
     Command(CommandStep),
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SwitchStep {
     #[serde(rename = "type")]
@@ -76,13 +78,13 @@ pub struct SwitchStep {
     pub cases: BTreeMap<String, String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 enum SwitchKind {
     Switch,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CommandStep {
     pub cmd: Vec<String>,
@@ -95,8 +97,9 @@ pub struct CommandStep {
     pub parse_stdout: Option<StdoutFormat>,
 }
 
-#[derive(Debug, PartialEq, Eq, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum StdoutFormat {
     Json,
 }

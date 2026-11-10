@@ -30,14 +30,18 @@ pub struct WorkflowFile {
 
 impl WorkflowFile {
     pub fn path(&self) -> &Path {
+        self.specified().unwrap_or_else(|| Path::new("stdo.yaml"))
+    }
+
+    pub fn specified(&self) -> Option<&Path> {
         self.named_file
             .as_deref()
             .or(self.positional_file.as_deref())
-            .unwrap_or_else(|| Path::new("stdo.yaml"))
     }
 }
 
 #[derive(Subcommand)]
+#[non_exhaustive]
 pub enum Command {
     /// Execute a workflow DAG.
     Run {
@@ -55,12 +59,12 @@ pub enum Command {
         #[arg(long)]
         force: bool,
     },
-    /// Launch the offline Studio UI (in development).
+    /// Launch the offline Studio UI on 127.0.0.1.
     Serve {
-        #[arg(default_value = "stdo.yaml")]
-        file: PathBuf,
-        #[arg(long)]
-        watch: bool,
+        #[command(flatten)]
+        file: WorkflowFile,
+        #[arg(long, default_value_t = 8080)]
+        port: u16,
     },
     /// Validate the workflow DAG and check required executables.
     Doctor {

@@ -143,7 +143,7 @@ impl Running {
             }
         }
         if let Some(timer) = &mut timing {
-            timer.set_bytes(stdout_buffer.bytes().len(), stderr_buffer.bytes().len());
+            timer.set_streams(stdout_buffer.bytes(), stderr_buffer.bytes());
             if matches!(result, Ok(None)) {
                 timer.set_status(Status::Cancelled);
             } else if let Some(status) = observed_status {

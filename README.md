@@ -16,7 +16,7 @@ A compact, zero-network Rust binary that orchestrates local CLI tools (`curl`, `
 </div>
 
 > [!NOTE]
-> **Phase 1 (`v0.1.0`) is complete.** `stdo doctor` and `stdo run` support parallel DAG layers, monitored pipes, switch routing, and a PID ledger. Phase 2 adds SHA-256 step caching. The Embedded Studio UI (`stdo serve`) is planned for `v0.2.0`.
+> **Phase 2 (`v0.2.0`) adds SHA-256 step caching and an embedded offline Studio.** Use `stdo serve` to edit, validate, save, and run workflows in your browser.
 
 ## Why `stdo`?
 
@@ -27,7 +27,7 @@ Modern AI, data, and automation orchestrators (like Dify, Airflow, or Langflow) 
 1. **Zero HTTP Client Inside:** `stdo` contains no outbound network stack (`no reqwest`, `no openssl`). Need a REST API? Call `curl`. Need a local LLM? Call `ollama` or `llama-cli`. Need vector or relational queries? Call `sqlite3`.
 2. **True `stdin` / `stdout` Piping (No `ARG_MAX` Crashes):** Passing megabytes of JSON or RAG context through environment variables (`${OUTPUT}`) crashes the OS kernel (`ARG_MAX` limit) and invites shell-injection bugs. `stdo` streams data directly through process file descriptors (`fd 0` and `fd 1`).
 3. **Content-Addressable Cache:** Deterministic steps can reuse captured output from a previous run.
-4. **Embedded Offline Studio (Phase 2):** A local Web UI will visualize the execution graph, generate input forms, and stream logs over WebSockets.
+4. **Embedded Offline Studio:** Edit the execution graph, configure inputs, and inspect completed runs from a local browser.
 
 ## What is a Unix DAG?
 
@@ -155,11 +155,15 @@ See the [workflow gallery](examples/README.md) for the ETL and release gate exam
 
 ## Embedded Studio (`stdo serve`)
 
-Phase 2 will add a local-only HTTP/WebSocket server bound to `127.0.0.1:8080` with **zero external CDN calls** and these panels:
+```sh
+stdo serve -f examples/03-release-gate-switch.yaml --port 8080
+```
 
-- **Left Panel (Auto-Generated Controls):** Renders typed inputs (`string`, `path`, `enum`, `number`, `boolean`) directly from your `stdo.yaml`.
-- **Center Panel (Live SVG DAG):** Visualizes topological layers, parallel branches, and conditional switches. Active nodes pulse in real time as processes execute.
-- **Right Panel (Stream Inspector):** Click any node to inspect resolved `stdin`, live `stdout` / `stderr` lines, execution latency (`ms`), exit code, and SHA-256 cache hit status.
+Open [Studio](http://127.0.0.1:8080) in your browser. With no file argument, Studio selects `stdo.yaml` if present, then the first YAML file from the working directory or `examples/`. Studio binds to IPv4 loopback and serves the editor from the binary.
+
+- Drag nodes to arrange them. Connect output and input ports to add pipe, template, or switch links. Click an edge to remove it.
+- Use **Edit** to configure workflow inputs and steps, or use **YAML** to edit the same draft as text. **Validate (Doctor)** checks the draft. **Save YAML** validates the DAG and atomically writes it inside the working directory.
+- Use **Run Workflow** to execute the draft with optional input overrides and cache bypass. The inspector shows workflow stdout, captured stderr excerpts, timings, cache hits, and the PID ledger on failure.
 
 ## Roadmap
 
@@ -174,11 +178,12 @@ Phase 2 will add a local-only HTTP/WebSocket server bound to `127.0.0.1:8080` wi
 ### Phase 2 — Caching & Embedded Studio (`v0.2.0`)
 
 - [x] SHA-256 Content-Addressable Storage (CAS) for command steps in `.stdo/cache/`.
-- [ ] `stdo serve` local server (`127.0.0.1:8080`) with embedded single-file Vanilla JS + SVG DAG UI (`rust-embed`).
-- [ ] Live WebSocket streaming of `stdout` / `stderr` and hot-reload on `stdo.yaml` changes (`--watch`).
+- [x] `stdo serve` loopback HTTP server with a single embedded HTML/CSS/JS editor and SVG canvas.
+- [x] Workflow file editing, validation, execution, and per-step telemetry in Studio.
 
 ### Phase 3 — Industrial Benchmarking & Streaming (`v0.3.0`)
 
+- [ ] Live Studio output streaming and workflow file reload.
 - [ ] `stdo bench`: Built-in A/B/C pipeline comparison harness measuring end-to-end latency, Time-To-First-Byte (TTFB/TTFT), and peak RSS memory per node.
 - [ ] Continuous JSONL line-by-line stream routing for high-frequency sensor and log pipelines.
 - [ ] Exportable offline HTML/JSON execution audit reports for air-gapped compliance.

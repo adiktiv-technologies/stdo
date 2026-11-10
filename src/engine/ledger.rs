@@ -32,6 +32,12 @@ struct Process {
 }
 
 impl ProcessLedger {
+    pub(crate) fn snapshot(&self) -> Vec<serde_json::Value> {
+        self.0.lock().expect("process ledger lock").iter().map(|process| {
+            serde_json::json!({"pid": process.pid, "step": process.step, "command": process.command, "status": process.state.label()})
+        }).collect()
+    }
+
     pub(super) fn record(&self, pid: u32, step: &str, command: Vec<String>) -> usize {
         let mut processes = self.0.lock().expect("process ledger lock");
         let index = processes.len();

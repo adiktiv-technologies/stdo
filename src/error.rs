@@ -1,6 +1,7 @@
 use std::{fmt, io, path::PathBuf};
 
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum Error {
     #[error("could not read workflow {path:?}: {source}")]
     ReadWorkflow { path: PathBuf, source: io::Error },
@@ -45,6 +46,8 @@ pub enum Error {
     WriteOutput(io::Error),
     #[error("step cache I/O failed at {path:?}: {source}")]
     Cache { path: PathBuf, source: io::Error },
+    #[error("Studio: {0}")]
+    Studio(#[source] io::Error),
 }
 
 struct Diagnostic<'a>(&'a str);

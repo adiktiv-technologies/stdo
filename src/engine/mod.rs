@@ -189,9 +189,9 @@ pub async fn run_with_options(
                         if let Ok(value) = StepOutput::new(captured, parse_json, id) {
                             if let Some(timer) = &mut timing {
                                 timer.set_status(Status::CacheHit(value.captured.status));
-                                timer.set_bytes(
-                                    value.captured.stdout.bytes().len(),
-                                    value.captured.stderr.bytes().len(),
+                                timer.set_streams(
+                                    value.captured.stdout.bytes(),
+                                    value.captured.stderr.bytes(),
                                 );
                             }
                             outputs.insert(id.to_owned(), TemplateValue::from_object(value));

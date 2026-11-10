@@ -9,9 +9,8 @@ use stdo::{
     doctor,
     engine::{self, ProcessLedger, Telemetry},
     error::Error,
+    studio,
 };
-
-const WIP_NOTICE: &str = "[WIP - Phase 1 DAG engine in progress]";
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -79,7 +78,8 @@ async fn dispatch(
             )
             .await?;
         }
-        Command::Serve { .. } => eprintln!("{WIP_NOTICE}"),
+        Command::Serve { file, port } => studio::serve(port, file.specified()).await?,
+        _ => return Err(Error::InvalidWorkflow("unsupported command".into())),
     }
     Ok(())
 }
