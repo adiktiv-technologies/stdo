@@ -9,7 +9,7 @@ inputs:
   background_video:
     type: string
     default: ""
-    description: "Optional path to a screen recording (.mov/.mp4). If empty, FFmpeg generates a 1080p dark slate."
+    description: "Optional path to a screen recording (.mov/.mp4). If empty, FFmpeg generates a 1080p animated audio waveform."
   output_wav: { type: path, default: /tmp/stdo-capsule-voice.wav }
   output_mp4: { type: path, default: /tmp/stdo-youtube-capsule.mp4 }
 
@@ -89,8 +89,10 @@ steps:
             -vf 'scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30' \
             -c:v libx264 -preset veryfast -pix_fmt yuv420p -c:a aac -b:a 192k -shortest -movflags +faststart "$tmp"
         else
-          ffmpeg -nostdin -hide_banner -loglevel error -y -f lavfi -i 'color=c=0x0d1117:s=1920x1080:r=30' \
-            -i "$wav" -map 0:v:0 -map 1:a:0 -c:v libx264 -tune stillimage -pix_fmt yuv420p \
+          ffmpeg -nostdin -hide_banner -loglevel error -y \
+            -f lavfi -i 'color=c=0x0d1117:s=1920x1080:r=30' -i "$wav" \
+            -filter_complex "[1:a]showwaves=s=1920x1080:mode=p2p:rate=30:colors=0x58a6ff[fg];[0:v][fg]overlay=format=auto,format=yuv420p[v]" \
+            -map "[v]" -map 1:a:0 -c:v libx264 -preset veryfast -pix_fmt yuv420p \
             -c:a aac -b:a 192k -shortest -movflags +faststart "$tmp"
         fi
         bytes=$(wc -c < "$tmp")

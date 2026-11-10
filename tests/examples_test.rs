@@ -478,7 +478,7 @@ exit 1
 }
 
 #[test]
-fn capsule_renders_slate_and_recording_offline() {
+fn capsule_renders_waveform_and_recording_offline() {
     let workspace = StubWorkspace::new("capsule");
     workspace.stub(
         "ollama",
@@ -497,7 +497,12 @@ esac
 [ "$(wc -c < './voice track.wav' | tr -d ' ')" = 12 ]
 case " $* " in
   *' -stream_loop -1 -i ./screen recording.mov '*) printf 'recording\n' >> render-modes ;;
-  *' color=c=0x0d1117:s=1920x1080:r=30 '*) printf 'slate\n' >> render-modes ;;
+  *' color=c=0x0d1117:s=1920x1080:r=30 '*)
+    case " $* " in
+      *' -filter_complex [1:a]showwaves=s=1920x1080:mode=p2p:rate=30:colors=0x58a6ff[fg];[0:v][fg]overlay=format=auto,format=yuv420p[v] -map [v] -map 1:a:0 '*)
+        printf 'waveform\n' >> render-modes ;;
+      *) exit 1 ;;
+    esac ;;
   *) exit 1 ;;
 esac
 for output do :; done
@@ -533,7 +538,7 @@ printf '\000\000\000\014ftypisom' > "$output"
     );
     assert_eq!(
         fs::read_to_string(workspace.0.join("render-modes")).unwrap(),
-        "slate\nrecording\n"
+        "waveform\nrecording\n"
     );
 }
 
