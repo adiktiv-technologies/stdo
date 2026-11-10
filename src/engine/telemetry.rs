@@ -12,6 +12,7 @@ pub struct Telemetry {
     started: Instant,
     pub(super) budget: Budget,
     records: Arc<Mutex<Records>>,
+    capture_stderr: bool,
 }
 
 impl Default for Telemetry {
@@ -20,6 +21,7 @@ impl Default for Telemetry {
             started: Instant::now(),
             budget: Budget::default(),
             records: Arc::default(),
+            capture_stderr: false,
         }
     }
 }
@@ -37,6 +39,7 @@ struct Step {
     executed: bool,
     stdout: usize,
     stderr: usize,
+    diagnostic: Vec<u8>,
 }
 
 pub(super) enum Status {
@@ -65,6 +68,48 @@ impl std::fmt::Display for Status {
 }
 
 impl Telemetry {
+    pub(crate) fn for_studio() -> Self {
+        Self {
+            capture_stderr: true,
+            ..Self::default()
+        }
+    }
+
+    pub(crate) fn studio_report(&self) -> (serde_json::Value, String, bool) {
+        let records = self.records.lock().expect("telemetry lock");
+        let mut stderr = Vec::new();
+        let mut truncated = false;
+        let steps: Vec<_> = records.steps.iter().map(|((layer, _), step)| {
+            stderr.extend_from_slice(&step.diagnostic);
+            truncated |= step.diagnostic.len() < step.stderr;
+            let (kind, exit_code) = match &step.status {
+                Status::Exit(status) => ("exit", status.code()),
+                Status::CacheHit(status) => ("cache_hit", status.code()),
+                Status::Switch(_) => ("switch", None),
+                Status::Skipped => ("skipped", None),
+                Status::Cancelled => ("cancelled", None),
+                Status::Failed => ("failed", None),
+            };
+            serde_json::json!({
+                "id": step.id, "layer": layer, "status": step.status.to_string(), "kind": kind,
+                "exit_code": exit_code, "cache_hit": kind == "cache_hit",
+                "duration_ms": milliseconds(step.duration), "stdout_bytes": step.stdout, "stderr_bytes": step.stderr
+            })
+        }).collect();
+        let layers: Vec<_> = records.layers.iter().map(|(layer, duration)| {
+            serde_json::json!({"layer": layer, "duration_ms": milliseconds(*duration)})
+        }).collect();
+        let report = serde_json::json!({
+            "steps": steps, "layers": layers, "duration_ms": milliseconds(self.started.elapsed()),
+            "peak_bytes": self.budget.peak_bytes(), "limit_bytes": MAX_WORKFLOW_MEMORY_BYTES
+        });
+        (
+            report,
+            String::from_utf8_lossy(&stderr).into_owned(),
+            truncated,
+        )
+    }
+
     pub(super) fn layer(&self, number: usize) -> LayerTimer<'_> {
         LayerTimer {
             telemetry: self,
@@ -85,6 +130,7 @@ impl Telemetry {
                 executed: false,
                 stdout: 0,
                 stderr: 0,
+                diagnostic: Vec::new(),
             }),
         }
     }
@@ -169,10 +215,15 @@ impl StepTimer {
         self.record.as_mut().expect("active step").executed = true;
     }
 
-    pub(super) fn set_bytes(&mut self, stdout: usize, stderr: usize) {
+    pub(super) fn set_streams(&mut self, stdout: &[u8], stderr: &[u8]) {
         let record = self.record.as_mut().expect("active step");
-        record.stdout = stdout;
-        record.stderr = stderr;
+        record.stdout = stdout.len();
+        record.stderr = stderr.len();
+        if self.telemetry.capture_stderr {
+            record
+                .diagnostic
+                .extend_from_slice(&stderr[..stderr.len().min(16 * 1024)]);
+        }
     }
 }
 

@@ -5,3 +5,4 @@ pub mod dag;
 pub mod doctor;
 pub mod engine;
 pub mod error;
+pub mod studio;
