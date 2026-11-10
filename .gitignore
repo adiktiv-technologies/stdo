@@ -27,3 +27,7 @@ docs
 .env
 .vscode
 .stdo/
+
+# Local AI agent configuration
+.claude/
+AGENTS.md
