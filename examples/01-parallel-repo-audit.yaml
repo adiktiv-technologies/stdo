@@ -15,6 +15,9 @@ steps:
       - sh
       - -c
       - |
+        if [ "$1" = ./examples ] && [ ! -d "$1" ] && [ -f ./01-parallel-repo-audit.yaml ]; then
+          set -- .
+        fi
         CDPATH= cd "$1" || exit 2
         count=0
         for file in ./*.yaml; do
@@ -28,6 +31,9 @@ steps:
       - sh
       - -c
       - |
+        if [ "$1" = ./examples ] && [ ! -d "$1" ] && [ -f ./01-parallel-repo-audit.yaml ]; then
+          set -- .
+        fi
         CDPATH= cd "$1" || exit 2
         for file in ./*.yaml; do
           [ -f "$file" ] && cat "$file"
@@ -39,6 +45,9 @@ steps:
       - sh
       - -c
       - |
+        if [ "$1" = ./examples ] && [ ! -d "$1" ] && [ -f ./01-parallel-repo-audit.yaml ]; then
+          set -- . "$2"
+        fi
         CDPATH= cd "$1" || exit 2
         for file in ./*.yaml; do
           [ -f "$file" ] && cat "$file"

@@ -152,3 +152,21 @@ fn release_readiness_renders_markdown_and_valid_json() {
         })
     );
 }
+
+#[test]
+fn repo_examples_render_the_same_output_from_the_gallery_directory() {
+    for file in [AUDIT, ARCHITECTURE, READINESS] {
+        let local_path = format!("./{}", file.strip_prefix("examples/").unwrap());
+        let output = Command::new(env!("CARGO_BIN_EXE_stdo"))
+            .current_dir(root().join("examples"))
+            .args(["run", &local_path])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{local_path}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(output.stdout, invoke("run", file, &[]).as_bytes());
+    }
+}

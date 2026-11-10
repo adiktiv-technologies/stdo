@@ -12,7 +12,13 @@ pub const MAX_STEP_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
 pub const MAX_WORKFLOW_MEMORY_BYTES: usize = 32 * 1024 * 1024;
 
 #[derive(Clone, Default)]
-pub(super) struct Budget(Arc<AtomicUsize>);
+pub(super) struct Budget(Arc<Usage>);
+
+#[derive(Default)]
+struct Usage {
+    current: AtomicUsize,
+    peak: AtomicUsize,
+}
 
 impl Budget {
     pub(super) fn buffer(&self) -> Buffer {
@@ -25,25 +31,32 @@ impl Budget {
     }
 
     pub(super) fn reserve(&self, bytes: usize) -> bool {
-        let mut used = self.0.load(Ordering::Relaxed);
+        let mut used = self.0.current.load(Ordering::Relaxed);
         loop {
             if bytes > MAX_WORKFLOW_MEMORY_BYTES - used {
                 return false;
             }
-            match self.0.compare_exchange_weak(
+            match self.0.current.compare_exchange_weak(
                 used,
                 used + bytes,
                 Ordering::Relaxed,
                 Ordering::Relaxed,
             ) {
-                Ok(_) => return true,
+                Ok(_) => {
+                    self.0.peak.fetch_max(used + bytes, Ordering::Relaxed);
+                    return true;
+                }
                 Err(current) => used = current,
             }
         }
     }
 
     pub(super) fn release(&self, bytes: usize) {
-        self.0.fetch_sub(bytes, Ordering::Relaxed);
+        self.0.current.fetch_sub(bytes, Ordering::Relaxed);
+    }
+
+    pub(super) fn peak_bytes(&self) -> usize {
+        self.0.peak.load(Ordering::Relaxed)
     }
 }
 

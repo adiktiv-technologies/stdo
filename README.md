@@ -66,6 +66,8 @@ By default, `run` and `doctor` allow up to 64 steps, 16 layers, and 16 steps per
 
 Use `{{ inputs.key }}` in command arguments and pass step output through `stdin` templates or `pipe_from`. The workflow's `output` template determines what `stdo run` writes to stdout.
 
+Pass `--telemetry` (`-t`) to print step and layer timings, captured byte counts, and peak monitored buffer usage to stderr. Failed runs include a partial report. Failed commands also surface captured stderr above the PID ledger.
+
 ```yaml
 version: "1.0"
 name: "offline-code-triage"
@@ -142,6 +144,9 @@ stdo doctor -f examples/01-parallel-repo-audit.yaml
 
 # Run it headlessly from the repository root
 stdo run -f examples/01-parallel-repo-audit.yaml
+
+# Keep the workflow output on stdout and write telemetry to stderr
+stdo run -t -f examples/01-parallel-repo-audit.yaml
 ```
 
 See the [workflow gallery](examples/README.md) for the ETL and release gate examples.

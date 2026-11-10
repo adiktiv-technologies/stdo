@@ -7,6 +7,7 @@ steps:
       - sh
       - -c
       - |
+        if [ ! -f Cargo.toml ] && [ -f ../Cargo.toml ]; then cd .. || exit 2; fi
         status=PASS
         for file in src/lib.rs src/main.rs; do
           if ! grep -Fxq '#![forbid(unsafe_code)]' "$file"; then status=FAIL; fi
@@ -18,7 +19,12 @@ steps:
         printf '%s\n' "$status"
   - id: check_zero_network_deps
     cmd:
-      - awk
+      - sh
+      - -c
+      - |
+        if [ ! -f Cargo.toml ] && [ -f ../Cargo.toml ]; then cd .. || exit 2; fi
+        exec awk "$1" Cargo.toml
+      - stdo
       - |
         BEGIN { banned = "(reqwest|hyper|ureq|openssl|rustls)" }
         {
@@ -28,10 +34,14 @@ steps:
               $0 ~ "dependencies[.]\"?" banned "\"?[[:space:]]*\\]") found = 1
         }
         END { printf "{\"clean\":%s}\n", found ? "false" : "true" }
-      - Cargo.toml
     parse_stdout: json
   - id: stream_rust_files
-    cmd: [find, src, -type, f, -name, '*.rs', -exec, awk, 'END { print NR }', '{}', ';']
+    cmd:
+      - sh
+      - -c
+      - |
+        if [ ! -f Cargo.toml ] && [ -f ../Cargo.toml ]; then cd .. || exit 2; fi
+        exec find src -type f -name '*.rs' -exec awk 'END { print NR }' {} \;
   - id: count_rust_loc
     cmd: [awk, '{ lines += $1 } END { printf "{\"modules\":%d,\"lines\":%d}\n", NR, lines }']
     pipe_from: stream_rust_files
