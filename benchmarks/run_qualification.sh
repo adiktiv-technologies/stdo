@@ -3,6 +3,47 @@ set -euo pipefail
 export LC_ALL=C
 
 root=$(cd "$(dirname "$0")/.." && pwd)
+
+bash_worker() {
+  local name=$1 stamp=$2
+  sh -c 'sleep 0.04; printf "%s\n" "$1"' worker "$name" > "$name.out" || return
+  if [[ "$stamp" == yes ]]; then
+    jq -n now > "$name.time"
+  fi
+}
+
+bash_pipeline() {
+  local mode=$1 stamp=${2:-no} name pid failed=0
+  local pids=()
+  for name in alpha beta gamma; do
+    if [[ "$mode" == parallel ]]; then
+      bash_worker "$name" "$stamp" &
+      pids+=("$!")
+    else
+      bash_worker "$name" "$stamp"
+    fi
+  done
+  if [[ "$mode" == parallel ]]; then
+    for pid in "${pids[@]}"; do
+      wait "$pid" || failed=1
+    done
+    (( failed == 0 )) || return 1
+  fi
+  cat alpha.out beta.out gamma.out |
+    sh -c 'cat; sleep 0.04; printf "tail\n"' |
+    sh -c 'IFS= read -r first; printf "%s:" "$first"; wc -l' |
+    tr -d ' '
+}
+
+workspace=$(mktemp -d "${TMPDIR:-/tmp}/stdo-qualification.XXXXXXXX")
+trap 'rm -rf -- "$workspace"' EXIT
+
+if [[ "${1:-}" == --bash-baseline && "${2:-}" == parallel ]]; then
+  cd "$workspace"
+  bash_pipeline parallel
+  exit
+fi
+
 stdo=${STDO_BIN:-"$root/target/release/stdo"}
 runs=${RUNS:-15}
 warmup=${WARMUP:-2}
@@ -17,8 +58,7 @@ warmup=${WARMUP:-2}
 }
 command -v jq >/dev/null
 
-workspace=$(mktemp -d "${TMPDIR:-/tmp}/stdo-qualification.XXXXXXXX")
-trap 'rm -rf -- "$workspace"' EXIT
+(cd "$root" && [[ $("$stdo" run -f benchmarks/parallel-bash-baseline.yaml) == alpha:3 ]])
 cd "$workspace"
 
 cat > pipeline.yaml <<'YAML'
@@ -44,32 +84,28 @@ steps:
 output: '{{ steps.count.stdout | replace(" ", "") | trim }}'
 YAML
 
-worker() { sh -c 'sleep 0.04; printf "%s\n" "$1"' worker "$1"; }
-
 bash_trial() {
-  local started first finished alpha beta gamma result
+  local mode=$1 started
+  local TIMEFORMAT='%3R'
+  # Measure wall time without timestamp subprocesses on the pipeline's path.
+  { time bash_pipeline "$mode" > bash-output.txt 2>&3; } 3>&2 2> bash-wall.txt
+  [[ $(<bash-output.txt) == alpha:3 ]]
+
+  # Time to first worker output is measured in a separate execution.
   started=$(jq -n now)
-  alpha=$(worker alpha)
-  first=$(jq -n now)
-  beta=$(worker beta)
-  gamma=$(worker gamma)
-  printf '%s\n' "$alpha" "$beta" "$gamma" | sh -c 'cat; sleep 0.04; printf "tail\n"' > fan-in.txt
-  result=$(sh -c 'IFS= read -r first; printf "%s:" "$first"; wc -l' < fan-in.txt | tr -d ' ')
-  [[ "$result" == alpha:3 ]]
-  finished=$(jq -n now)
-  awk -v start="$started" -v first="$first" -v end="$finished" \
-    'BEGIN { printf "%.6f\t%.6f\n", (end-start)*1000, (first-start)*1000 }'
+  bash_pipeline "$mode" yes > bash-output.txt
+  [[ $(<bash-output.txt) == alpha:3 ]]
+  jq -rs --argjson start "$started" --argjson wall "$(<bash-wall.txt)" \
+    '[$wall * 1000, (min - $start) * 1000] | @tsv' alpha.time beta.time gamma.time
 }
 
-i=0
-while (( i < warmup )); do
-  bash_trial >/dev/null
-  i=$((i + 1))
-done
-i=0
-while (( i < runs )); do
-  bash_trial >> bash-samples.tsv
-  i=$((i + 1))
+for mode in sequential parallel; do
+  for ((i = 0; i < warmup; i++)); do
+    bash_trial "$mode" >/dev/null
+  done
+  for ((i = 0; i < runs; i++)); do
+    bash_trial "$mode" >> "$mode.tsv"
+  done
 done
 
 [[ $("$stdo" run -f pipeline.yaml --no-cache) == alpha:3 ]]
@@ -81,7 +117,9 @@ jq -e '.workflows[0].cache_hit_ratio == 0.6' warm.json >/dev/null
 printf '%s | %s | %s runs, %s warmups\n' "$(uname -sm)" "$("$stdo" --version)" "$runs" "$warmup"
 printf '| Mode | Wall p50 (ms) | Wall p95 (ms) | Mean TTFB (ms) | Peak monitored bytes | Cache hits |\n'
 printf '| --- | ---: | ---: | ---: | ---: | ---: |\n'
-sort -n -k1,1 bash-samples.tsv | awk '
+for mode in sequential parallel; do
+  if [[ "$mode" == sequential ]]; then label='Sequential Bash'; else label='Parallel Bash'; fi
+  sort -n -k1,1 "$mode.tsv" | awk -v label="$label" '
   function percentile(q, x, i, j) {
     x = 1 + (NR - 1) * q
     i = int(x)
@@ -90,9 +128,10 @@ sort -n -k1,1 bash-samples.tsv | awk '
   }
   { latency[NR] = $1; first += $2 }
   END {
-    printf "| Sequential Bash | %.2f | %.2f | %.2f | n/a | n/a |\n", percentile(0.5), percentile(0.95), first/NR
+    printf "| %s | %.2f | %.2f | %.2f | n/a | n/a |\n", label, percentile(0.5), percentile(0.95), first/NR
   }
 '
+done
 for mode in cold warm; do
   jq -r --arg mode "$mode" '.workflows[0] |
     def round2: (. * 100 | round) / 100;

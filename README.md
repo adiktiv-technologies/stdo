@@ -77,6 +77,16 @@ Set `capture_stdout: false` on a command to stream stdout to live consumers or d
 
 Set `pipe_mode: atomic` on a `pipe_from` consumer to start it only after the captured producer output has passed validation and the producer has exited with status zero. This is useful for steps that write to databases or external systems. With the default `pipe_mode: concurrent`, a consumer may act on partial output before a later producer failure.
 
+#### Execution mode trade-offs
+
+| Setting | When data moves | What composes |
+| --- | --- | --- |
+| `pipe_mode: concurrent` | The consumer can start while the producer is running. | Accepts captured or uncaptured producers. Cache lookup on the consumer, retries on either end, or other dependencies can require a buffered edge. |
+| `pipe_mode: atomic` | The consumer starts after the producer exits zero and its output passes validation. | Requires capture on the producer. The consumer can disable its own capture. Any external writes it makes remain in place if it later fails. |
+| `capture_stdout: false` | Stdout streams to live consumers, or is discarded when unpiped. | Supports streaming JSONL. Rules out replay, `steps.<id>.stdout` and `.json`, whole-document JSON parsing, and caching on that step. |
+| `cache: true` | A piped consumer buffers all stdin for its cache key. A cached producer can replay its captured output into a live pipe. | Requires capture on the cached step and a captured upstream for piped input. Works with retries on cache misses. |
+| `retry: { attempts: 2 }` | A retrying consumer replays buffered stdin. Downstream steps wait for the retrying producer to succeed. | With multiple attempts, piped input requires a captured upstream, and piped output requires capture on the retrying step. |
+
 Set `parse_stdout: jsonl` to validate each non-empty JSON Lines record as stdout arrives. The runner compacts each record, ignores blank lines, and forwards complete records to live `pipe_from` consumers. An invalid record fails the producer with its line number. Templates and switches can use `steps.<id>.json | length` or index a record with `steps.<id>.json[0]`. Try [the JSONL sensor example](examples/06-jsonl-sensor-stream.yaml).
 
 By default, `run` and `doctor` allow up to 64 steps, 16 layers, and 16 steps per layer. Use `--force` to bypass these graph limits. Captured streams have an 8 MiB limit each, with a shared 32 MiB budget for captured data, pipe buffers, and rendered I/O buffers. On failure, `stdo run` prints the PID and last known status of each direct child it started.
@@ -225,7 +235,16 @@ stdo bench examples/01-parallel-repo-audit.yaml examples/02-monitored-pipe-etl.y
 
 Step TTFB measures from spawn to the first stdout chunk, or the read duration on a cache hit. Workflow TTFB is elapsed time to the first stdout from any step, with total duration as the fallback for a silent run. Benchmarks load each workflow once before its trials.
 
-In the [qualification benchmark](benchmarks/README.md), sequential Bash measured 251.17 ms at p50 and 259.96 ms at p95. The same workload took 120.76 ms at p50 and 124.84 ms at p95 with `stdo --no-cache`, and 64.15 ms at p50 and 66.88 ms at p95 with a warm cache. Mean TTFB was 58.58 ms, 56.71 ms, and 5.14 ms respectively. Peak monitored buffers were 393,228 bytes cold and 262,178 bytes warm.
+The [qualification benchmark](benchmarks/README.md) used `stdo 0.5.0` on Darwin arm64 with 15 measured trials and two warmups per mode.
+
+| Mode | Wall p50 (ms) | Wall p95 (ms) | Mean TTFB (ms) | Peak monitored bytes |
+| --- | ---: | ---: | ---: | ---: |
+| Sequential Bash | 237.00 | 259.70 | 62.04 | n/a |
+| Parallel Bash | 116.00 | 119.50 | 61.21 | n/a |
+| Cold `stdo --no-cache` | 118.74 | 130.69 | 56.41 | 393,233 |
+| Warm `stdo` | 61.66 | 63.00 | 3.85 | 262,178 |
+
+Cold `stdo` was close to Parallel Bash at the median. With three of five steps served from cache, warm `stdo` took **53%** of Parallel Bash's median time and **26%** of Sequential Bash's on this workload.
 
 ## Embedded Studio (`stdo serve`)
 
