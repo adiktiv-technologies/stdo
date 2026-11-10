@@ -41,6 +41,7 @@ struct Step {
 
 pub(super) enum Status {
     Exit(ExitStatus),
+    CacheHit(ExitStatus),
     Switch(String),
     Skipped,
     Cancelled,
@@ -54,6 +55,7 @@ impl std::fmt::Display for Status {
                 Some(code) => write!(formatter, "exit {code}"),
                 None => write!(formatter, "{status}"),
             },
+            Self::CacheHit(status) => write!(formatter, "cache hit ({})", Self::Exit(*status)),
             Self::Switch(target) => write!(formatter, "switch -> {target}"),
             Self::Skipped => formatter.write_str("skipped"),
             Self::Cancelled => formatter.write_str("cancelled"),
@@ -112,6 +114,11 @@ impl Telemetry {
             }
         }
         let executed = records.steps.values().filter(|step| step.executed).count();
+        let cached = records
+            .steps
+            .values()
+            .filter(|step| matches!(step.status, Status::CacheHit(_)))
+            .count();
         let switches = records
             .steps
             .values()
@@ -123,7 +130,7 @@ impl Telemetry {
             .filter(|step| matches!(step.status, Status::Skipped))
             .count();
         eprintln!(
-            "  Total: {:.2} ms | executed={executed} switches={switches} skipped={skipped} | peak_bytes={} limit_bytes={MAX_WORKFLOW_MEMORY_BYTES}",
+            "  Total: {:.2} ms | executed={executed} switches={switches} skipped={skipped} cached={cached} | peak_bytes={} limit_bytes={MAX_WORKFLOW_MEMORY_BYTES}",
             milliseconds(total), self.budget.peak_bytes()
         );
     }

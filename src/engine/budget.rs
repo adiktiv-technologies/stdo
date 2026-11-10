@@ -82,11 +82,13 @@ impl Buffer {
             limit_bytes,
         })
     }
-}
+    pub(super) fn resize_zeroed(&mut self, size: usize) -> io::Result<()> {
+        self.reserve(size)?;
+        self.bytes.resize(size, 0);
+        Ok(())
+    }
 
-impl Write for Buffer {
-    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        let required = self.bytes.len().saturating_add(bytes.len());
+    fn reserve(&mut self, required: usize) -> io::Result<()> {
         let additional = required.saturating_sub(self.reserved);
         let limit = if required > MAX_STEP_OUTPUT_BYTES {
             Some(MAX_STEP_OUTPUT_BYTES)
@@ -104,6 +106,13 @@ impl Write for Buffer {
             return Err(io::Error::other(error));
         }
         self.reserved += additional;
+        Ok(())
+    }
+}
+
+impl Write for Buffer {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.reserve(self.bytes.len().saturating_add(bytes.len()))?;
         self.bytes.extend_from_slice(bytes);
         Ok(bytes.len())
     }

@@ -1,4 +1,5 @@
 mod budget;
+mod cache;
 mod ledger;
 pub mod runner;
 mod telemetry;
@@ -47,6 +48,39 @@ pub async fn run_with_telemetry(
     output: &mut impl io::Write,
     telemetry: Option<&Telemetry>,
 ) -> Result<(), Error> {
+    run_with_options(
+        workflow,
+        overrides,
+        ledger,
+        output,
+        RunOptions {
+            force,
+            telemetry,
+            ..RunOptions::default()
+        },
+    )
+    .await
+}
+
+#[derive(Default)]
+pub struct RunOptions<'a> {
+    pub force: bool,
+    pub no_cache: bool,
+    pub telemetry: Option<&'a Telemetry>,
+}
+
+pub async fn run_with_options(
+    workflow: &Workflow,
+    overrides: &[String],
+    ledger: &ProcessLedger,
+    output: &mut impl io::Write,
+    options: RunOptions<'_>,
+) -> Result<(), Error> {
+    let RunOptions {
+        force,
+        no_cache,
+        telemetry,
+    } = options;
     let graph = Graph::build_with_force(workflow, force)?;
     let inputs = resolve_inputs(workflow, overrides)?;
     let argv_context = context! { inputs => &inputs };
@@ -144,6 +178,34 @@ pub async fn run_with_telemetry(
         let mut error = None;
         for (index, id, command, argv, input) in commands {
             let mut timing = telemetry.map(|report| report.step(layer_number, index, id));
+            let entry = (command.cache && !no_cache).then(|| {
+                cache::Entry::new(&argv, command, input.as_deref().map_or(&[], Buffer::bytes))
+            });
+            let parse_json = command.parse_stdout.is_some();
+            if let Some(entry) = &entry {
+                match entry.load(&budget, id).await {
+                    Ok(Some(captured)) if captured.status.success() || command.ignore_exit_code => {
+                        // A malformed JSON payload is a cache miss, just like a truncated entry.
+                        if let Ok(value) = StepOutput::new(captured, parse_json, id) {
+                            if let Some(timer) = &mut timing {
+                                timer.set_status(Status::CacheHit(value.captured.status));
+                                timer.set_bytes(
+                                    value.captured.stdout.bytes().len(),
+                                    value.captured.stderr.bytes().len(),
+                                );
+                            }
+                            outputs.insert(id.to_owned(), TemplateValue::from_object(value));
+                            continue;
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(source) => {
+                        error = Some(source);
+                        cancel.send_replace(true);
+                        break;
+                    }
+                }
+            }
             let running =
                 match Running::spawn(id, argv, input, command.ignore_exit_code, ledger.clone()) {
                     Ok(running) => running,
@@ -158,28 +220,16 @@ pub async fn run_with_telemetry(
             }
             let budget = budget.clone();
             let receiver = cancel.subscribe();
-            let parse_json = command.parse_stdout.is_some();
             let id = id.to_owned();
             tasks.spawn(async move {
                 let Some(captured) = running.finish(budget, receiver, timing).await? else {
                     return Ok(None);
                 };
-                let json = if parse_json {
-                    let json: Value =
-                        serde_json::from_slice(captured.stdout.bytes()).map_err(|source| {
-                            Error::Json {
-                                step: id.clone(),
-                                source,
-                            }
-                        })?;
-                    Some(TemplateValue::from_serialize(json))
-                } else {
-                    None
-                };
-                Ok(Some((
-                    id,
-                    TemplateValue::from_object(StepOutput { captured, json }),
-                )))
+                let value = StepOutput::new(captured, parse_json, &id)?;
+                if let Some(entry) = entry {
+                    entry.store(&value.captured).await?;
+                }
+                Ok(Some((id, TemplateValue::from_object(value))))
             });
         }
         while let Some(result) = tasks.join_next().await {
@@ -243,6 +293,22 @@ fn command_input(
 struct StepOutput {
     captured: Captured,
     json: Option<TemplateValue>,
+}
+
+impl StepOutput {
+    fn new(captured: Captured, parse_json: bool, step: &str) -> Result<Self, Error> {
+        let json = if parse_json {
+            let value: Value =
+                serde_json::from_slice(captured.stdout.bytes()).map_err(|source| Error::Json {
+                    step: step.to_owned(),
+                    source,
+                })?;
+            Some(TemplateValue::from_serialize(value))
+        } else {
+            None
+        };
+        Ok(Self { captured, json })
+    }
 }
 
 impl std::fmt::Debug for StepOutput {
