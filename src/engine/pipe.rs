@@ -19,6 +19,13 @@ pub(super) enum Input {
 }
 
 impl Input {
+    pub(super) fn replay(&self) -> Self {
+        match self {
+            Self::Buffered(buffer) => Self::Buffered(buffer.clone()),
+            Self::Live(_) => unreachable!("retry input must be buffered"),
+        }
+    }
+
     pub(super) fn cache_bytes(&self) -> &[u8] {
         match self {
             Self::Buffered(buffer) => buffer.bytes(),

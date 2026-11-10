@@ -8,7 +8,7 @@ pub mod runner;
 pub(crate) mod telemetry;
 pub mod template;
 
-use std::{collections::BTreeMap, io, sync::Arc};
+use std::{collections::BTreeMap, io, sync::Arc, time::Duration};
 
 use minijinja::{context, value::Object, Value as TemplateValue};
 use serde_json::Value;
@@ -200,7 +200,41 @@ async fn run_workflow(
                         None => command_input(command, &context, &outputs, &budget, &step.id)?
                             .map(pipe::Input::Buffered),
                     };
-                    commands.push((layer_number, index, step.id.as_str(), command, argv, input));
+                    let entry = if command.cache && !no_cache {
+                        let paths = command
+                            .cache_files
+                            .iter()
+                            .map(|path| {
+                                template::render(path, &argv_context).map_err(|source| {
+                                    Error::Template {
+                                        location: format!("cache_files for step {:?}", step.id),
+                                        source,
+                                    }
+                                })
+                            })
+                            .collect::<Result<Vec<_>, _>>()?;
+                        Some(
+                            cache::Entry::new(
+                                &step.id,
+                                &argv,
+                                command,
+                                input.as_ref().map_or(&[], pipe::Input::cache_bytes),
+                                &paths,
+                            )
+                            .await?,
+                        )
+                    } else {
+                        None
+                    };
+                    commands.push((
+                        layer_number,
+                        index,
+                        step.id.as_str(),
+                        command,
+                        argv,
+                        input,
+                        entry,
+                    ));
                 }
             }
         }
@@ -208,19 +242,12 @@ async fn run_workflow(
         let (cancel, _) = watch::channel(false);
         let mut tasks = JoinSet::new();
         let mut error = None;
-        for (layer_number, index, id, command, argv, input) in commands {
+        for (layer_number, index, id, command, argv, input, entry) in commands {
             let mut outgoing = pipes.remove(&index).unwrap_or_default();
             let mut timing = telemetry.map(|report| report.step(layer_number, index, id));
             if let Some(timer) = &timing {
                 timer.started();
             }
-            let entry = (command.cache && !no_cache).then(|| {
-                cache::Entry::new(
-                    &argv,
-                    command,
-                    input.as_ref().map_or(&[], pipe::Input::cache_bytes),
-                )
-            });
             let format = command.parse_stdout.clone();
             if let Some(entry) = &entry {
                 let read_started = timing.as_ref().map(|_| std::time::Instant::now());
@@ -280,49 +307,116 @@ async fn run_workflow(
                     }
                 }
             }
-            let running =
-                match Running::spawn(id, argv, input, command.ignore_exit_code, ledger.clone()) {
-                    Ok(running) => running,
-                    Err(source) => {
-                        error = Some(source);
-                        cancel.send_replace(true);
-                        break;
-                    }
-                };
+            let retry = command.retry;
+            let retries = command.retries();
+            let replay = if retries {
+                input.as_ref().map(pipe::Input::replay)
+            } else {
+                None
+            };
+            let ledger = ledger.clone();
+            let ignore_exit_code = command.ignore_exit_code;
+            let timeout_ms = command.timeout_ms;
+            let spawn = move |id: &str, input| {
+                Running::spawn(
+                    id,
+                    &argv,
+                    input,
+                    ignore_exit_code,
+                    timeout_ms,
+                    !retries,
+                    ledger.clone(),
+                )
+            };
+            let mut running = match spawn(id, input) {
+                Ok(running) => running,
+                Err(source) => {
+                    error = Some(source);
+                    cancel.send_replace(true);
+                    break;
+                }
+            };
             if let Some(timer) = &mut timing {
                 timer.spawned();
             }
             let budget = budget.clone();
-            let receiver = cancel.subscribe();
+            let mut receiver = cancel.subscribe();
             let id = id.to_owned();
             tasks.spawn(async move {
-                let Some(captured) = running
-                    .finish(
-                        budget,
-                        receiver,
-                        timing.as_mut(),
-                        format == Some(StdoutFormat::Jsonl),
-                        &mut outgoing,
-                    )
-                    .await?
-                else {
-                    return Ok(None);
-                };
-                let result = async {
-                    let value = StepOutput::new(captured, format.as_ref(), &id, false)?;
-                    if let Some(entry) = entry {
-                        entry.store(&value.captured).await?;
+                let mut attempt = 1;
+                let value = loop {
+                    let result = match running
+                        .finish(
+                            budget.clone(),
+                            receiver.clone(),
+                            timing.as_mut(),
+                            format == Some(StdoutFormat::Jsonl),
+                            &mut outgoing,
+                        )
+                        .await
+                    {
+                        Ok(None) => return Ok(None),
+                        Ok(Some(captured)) => {
+                            StepOutput::new(captured, format.as_ref(), &id, false)
+                        }
+                        Err(error) => Err(error),
+                    };
+                    let failure = match result {
+                        Ok(value) => break value,
+                        Err(error) => error,
+                    };
+                    if matches!(failure, Error::Json { .. } | Error::JsonLine { .. }) {
+                        if let Some(timer) = &mut timing {
+                            timer.set_status(Status::Failed);
+                        }
                     }
-                    outgoing.finish().await;
-                    Ok(Some((id, TemplateValue::from_object(value))))
-                }
-                .await;
-                if result.is_err() {
+                    let Some(policy) = retry.filter(|policy| {
+                        attempt < policy.attempts
+                            && matches!(
+                                failure,
+                                Error::StepFailed { .. }
+                                    | Error::StepTimeout { .. }
+                                    | Error::Json { .. }
+                                    | Error::JsonLine { .. }
+                            )
+                    }) else {
+                        return Err(failure);
+                    };
+                    tokio::select! {
+                        biased;
+                        _ = receiver.wait_for(|cancelled| *cancelled) => {
+                            if let Some(timer) = &mut timing {
+                                timer.set_status(Status::Cancelled);
+                            }
+                            return Ok(None);
+                        }
+                        _ = tokio::time::sleep(Duration::from_millis(policy.backoff_ms)) => {}
+                    }
+                    running =
+                        spawn(&id, replay.as_ref().map(pipe::Input::replay)).inspect_err(|_| {
+                            if let Some(timer) = &mut timing {
+                                timer.set_status(Status::Failed);
+                            }
+                        })?;
+                    attempt += 1;
                     if let Some(timer) = &mut timing {
-                        timer.set_status(Status::Failed);
+                        timer.spawned();
+                    }
+                };
+                if let Some(entry) = entry {
+                    entry.store(&value.captured).await.inspect_err(|_| {
+                        if let Some(timer) = &mut timing {
+                            timer.set_status(Status::Failed);
+                        }
+                    })?;
+                }
+                if retries {
+                    if let Some(timer) = &timing {
+                        timer.stdout_chunk(value.captured.stdout.bytes());
                     }
                 }
-                result
+                outgoing.finish().await;
+                Ok(Some((id, TemplateValue::from_object(value))))
             });
         }
         while let Some(result) = tasks.join_next().await {

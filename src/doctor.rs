@@ -2,7 +2,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     env,
     os::unix::fs::PermissionsExt,
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 use serde_json::{json, Value};
@@ -29,7 +29,6 @@ pub fn check_with_force(workflow: &Workflow, force: bool) -> Result<Graph, Error
         .filter_map(|(name, input)| input.default.as_ref().map(|value| (name, value)))
         .collect();
     let context = json!({ "inputs": inputs });
-    let search_path = env::var_os("PATH");
     let mut missing = BTreeSet::new();
 
     for step in &workflow.steps {
@@ -41,14 +40,7 @@ pub fn check_with_force(workflow: &Workflow, force: bool) -> Result<Graph, Error
                 location: format!("executable for step {:?}", step.id),
                 source,
             })?;
-        let available = if program.contains('/') {
-            is_executable(Path::new(&program))
-        } else {
-            search_path.as_ref().is_some_and(|path| {
-                env::split_paths(path).any(|directory| is_executable(&directory.join(&program)))
-            })
-        };
-        if !available {
+        if resolve_executable(&program).is_none() {
             missing.insert(format!("{program:?} (step {})", step.id));
         }
     }
@@ -58,6 +50,17 @@ pub fn check_with_force(workflow: &Workflow, force: bool) -> Result<Graph, Error
     } else {
         Err(Error::MissingExecutables(missing.into_iter().collect()))
     }
+}
+
+pub(crate) fn resolve_executable(program: &str) -> Option<PathBuf> {
+    let path = Path::new(program);
+    if program.contains('/') {
+        return is_executable(path).then(|| path.to_owned());
+    }
+    let search_path = env::var_os("PATH").unwrap_or_else(|| "/usr/bin:/bin".into());
+    env::split_paths(&search_path)
+        .map(|directory| directory.join(program))
+        .find(|path| is_executable(path))
 }
 
 fn is_executable(path: &Path) -> bool {

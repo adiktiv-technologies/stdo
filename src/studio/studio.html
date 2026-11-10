@@ -589,6 +589,21 @@ function renderEditor() {
         else changed(false);
       }));
       pane.append(toggle('Cache result',step.cache,value => change('cache',value)));
+      const stringList = value => value === undefined ||
+        (Array.isArray(value) && value.every(item => typeof item === 'string'));
+      pane.append(jsonField('Cache files (JSON array)',step.cache_files,stringList,
+        value => change('cache_files',value)));
+      pane.append(jsonField('Cache environment (JSON array)',step.cache_env,stringList,
+        value => change('cache_env',value)));
+      pane.append(jsonField('Timeout (ms)',step.timeout_ms,
+        value => value === undefined || (Number.isSafeInteger(value) && value > 0),
+        value => change('timeout_ms',value),false));
+      pane.append(jsonField('Retry policy (JSON object)',step.retry,value =>
+        value === undefined || (value && Number.isInteger(value.attempts) &&
+          value.attempts >= 1 && value.attempts <= 10 &&
+          (value.backoff_ms === undefined || (Number.isInteger(value.backoff_ms) &&
+            value.backoff_ms >= 0 && value.backoff_ms <= 60000))),
+        value => change('retry',value)));
       pane.append(toggle('Ignore nonzero exit codes',step.ignore_exit_code,value => change('ignore_exit_code',value)));
       pane.append(selectField('Parse stdout',[['','Raw bytes'],['json','JSON'],['jsonl','JSON Lines (JSONL)']],step.parse_stdout || '',
         value => change('parse_stdout',value || null)));
@@ -731,10 +746,11 @@ function updateBadge(card, result) {
   }
   card.dataset.result = result.kind === 'running' ? 'running' : result.cache_hit ? 'cached' :
     ['skipped','cancelled'].includes(result.kind) ? 'skipped' :
-      result.kind === 'failed' || (result.kind === 'exit' && result.exit_code !== 0) ? 'failed' : 'passed';
+      ['failed','timed_out'].includes(result.kind) || (result.kind === 'exit' && result.exit_code !== 0) ? 'failed' : 'passed';
   const text = result.kind === 'running' ? 'running…' :
     result.duration_ms.toFixed(2) + ' ms · ' + result.status +
-      (result.ttfb_ms == null ? '' : ' · TTFB ' + result.ttfb_ms.toFixed(2) + ' ms');
+      (result.ttfb_ms == null ? '' : ' · TTFB ' + result.ttfb_ms.toFixed(2) + ' ms') +
+      (result.attempts > 1 ? ' · attempts=' + result.attempts : '');
   const badge = element('span',text,'badge');
   badge.title = text;
   card.append(badge);
@@ -828,6 +844,7 @@ async function run() {
         element('pre',data.telemetry.steps.map(step =>
           step.id + '  ' + step.duration_ms.toFixed(2) + ' ms  ' + step.status +
           (step.ttfb_ms == null ? '' : ' · TTFB ' + step.ttfb_ms.toFixed(2) + ' ms') +
+          (step.attempts > 1 ? ' · attempts=' + step.attempts : '') +
           '  (' + step.stdout_bytes + ' out / ' + step.stderr_bytes + ' err)').join('\n') || 'No steps ran.'),
         element('h3','Workflow stdout'),element('pre',data.stdout || 'No output'),
         element('h3','Stderr' + (data.stderr_truncated ? ' (excerpt)' : '')),element('pre',data.stderr || 'No diagnostics')

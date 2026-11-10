@@ -37,6 +37,8 @@ pub(super) struct Running {
     step: String,
     input: Option<Input>,
     ignore_exit_code: bool,
+    timeout_ms: Option<u64>,
+    stream_stdout: bool,
     ledger: ProcessLedger,
     entry: usize,
 }
@@ -44,9 +46,11 @@ pub(super) struct Running {
 impl Running {
     pub(super) fn spawn(
         step: &str,
-        command: Vec<String>,
+        command: &[String],
         input: Option<Input>,
         ignore_exit_code: bool,
+        timeout_ms: Option<u64>,
+        stream_stdout: bool,
         ledger: ProcessLedger,
     ) -> Result<Self, Error> {
         let started = Instant::now();
@@ -58,13 +62,19 @@ impl Running {
             .kill_on_drop(true)
             .spawn()
             .map_err(|source| process_error(step, source))?;
-        let entry = ledger.record(child.id().expect("new child has a PID"), step, command);
+        let entry = ledger.record(
+            child.id().expect("new child has a PID"),
+            step,
+            command.to_vec(),
+        );
         Ok(Self {
             started,
             child,
             step: step.to_owned(),
             input,
             ignore_exit_code,
+            timeout_ms,
+            stream_stdout,
             ledger,
             entry,
         })
@@ -86,6 +96,19 @@ impl Running {
         let mut stderr_buffer = budget.buffer();
         let mut observed_status = None;
         let mut first_byte = None;
+        let timeout = async {
+            match self.timeout_ms {
+                Some(ms) => {
+                    let remaining =
+                        Duration::from_millis(ms).saturating_sub(self.started.elapsed());
+                    if !remaining.is_zero() {
+                        tokio::time::sleep(remaining).await;
+                    }
+                    ms
+                }
+                None => std::future::pending().await,
+            }
+        };
         let write_input = async move {
             if let Some(input) = self.input {
                 input
@@ -100,6 +123,7 @@ impl Running {
         let result = tokio::select! {
             biased;
             _ = cancel.wait_for(|cancelled| *cancelled) => Ok(None),
+            timeout_ms = timeout => Err(Error::StepTimeout { step: step.to_owned(), timeout_ms }),
             result = async {
                 let drain = async {
                     let stdout_read = async {
@@ -110,7 +134,9 @@ impl Running {
                             if bytes.is_empty() { break; }
                             if let Some(timer) = timing.as_deref() {
                                 first_byte.get_or_insert_with(Instant::now);
-                                timer.stdout_chunk(bytes);
+                                if self.stream_stdout {
+                                    timer.stdout_chunk(bytes);
+                                }
                             }
                             let start = stdout_buffer.bytes().len();
                             match &mut jsonl {
@@ -164,14 +190,21 @@ impl Running {
         };
         if !matches!(result, Ok(Some(_))) && observed_status.is_none() {
             match self.child.try_wait() {
-                Ok(Some(status)) => self.ledger.finished(self.entry, status, false),
+                Ok(Some(status)) => {
+                    observed_status = Some(status);
+                    self.ledger.finished(self.entry, status, false);
+                }
                 _ => {
                     let requested = self.child.start_kill().is_ok();
                     if let Ok(status) = self.child.wait().await {
+                        observed_status = Some(status);
                         self.ledger.finished(self.entry, status, requested);
                     }
                 }
             }
+        }
+        if matches!(result, Err(Error::StepTimeout { .. })) && observed_status.is_some() {
+            self.ledger.timed_out(self.entry);
         }
         if let Some(timer) = &mut timing {
             if let Some(at) = first_byte {
@@ -180,6 +213,8 @@ impl Running {
             timer.set_streams(stdout_buffer.bytes(), stderr_buffer.bytes());
             if matches!(result, Ok(None)) {
                 timer.set_status(Status::Cancelled);
+            } else if matches!(result, Err(Error::StepTimeout { .. })) {
+                timer.set_status(Status::TimedOut);
             } else if let Ok(Some(status)) = result {
                 timer.set_status(Status::Exit(status));
             }

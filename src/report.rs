@@ -150,11 +150,11 @@ impl Audit<'_> {
         if let Some(error) = &self.error {
             write!(body, "<pre class=\"error\">{}</pre>", escape(error)).unwrap();
         }
-        body.push_str("<h2>Steps</h2><table><thead><tr><th>Step</th><th>Layer</th><th>Status</th><th>Duration (ms)</th><th>TTFB (ms)</th><th>Stdout bytes</th><th>Stderr bytes</th></tr></thead><tbody>");
+        body.push_str("<h2>Steps</h2><table><thead><tr><th>Step</th><th>Layer</th><th>Status</th><th>Attempts</th><th>Duration (ms)</th><th>TTFB (ms)</th><th>Stdout bytes</th><th>Stderr bytes</th></tr></thead><tbody>");
         for step in &self.telemetry.steps {
             write!(body,
-                "<tr><td>{}</td><td>{}</td><td>{}</td><td>{:.2}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
-                escape(&step.id), step.layer, escape(&step.status), step.duration_ms,
+                "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{:.2}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+                escape(&step.id), step.layer, escape(&step.status), step.attempts, step.duration_ms,
                 step.ttfb_ms.map_or_else(|| "—".into(), |value| format!("{value:.2}")),
                 step.stdout_bytes, step.stderr_bytes,
             ).unwrap();

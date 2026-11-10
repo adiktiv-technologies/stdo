@@ -98,6 +98,53 @@ pub struct CommandStep {
     #[serde(default)]
     pub cache: bool,
     pub parse_stdout: Option<StdoutFormat>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retry: Option<RetryPolicy>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cache_files: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cache_env: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RetryPolicy {
+    pub attempts: u32,
+    #[serde(default)]
+    pub backoff_ms: u64,
+}
+
+impl CommandStep {
+    pub(crate) fn retries(&self) -> bool {
+        self.retry.is_some_and(|retry| retry.attempts > 1)
+    }
+
+    pub(crate) fn validate_options(&self, location: &str) -> Result<(), Error> {
+        let invalid = |message| Error::InvalidWorkflow(format!("{location}: {message}"));
+        if self.timeout_ms == Some(0) {
+            return Err(invalid("timeout_ms must be greater than 0"));
+        }
+        if let Some(retry) = self.retry {
+            if !(1..=10).contains(&retry.attempts) {
+                return Err(invalid("retry.attempts must be between 1 and 10"));
+            }
+            if retry.backoff_ms > 60_000 {
+                return Err(invalid("retry.backoff_ms must be at most 60000"));
+            }
+        }
+        if self
+            .cache_env
+            .iter()
+            .any(|name| name.is_empty() || name.contains(['=', '\0']))
+        {
+            return Err(invalid(
+                "cache_env contains an invalid environment variable name",
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]

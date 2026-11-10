@@ -31,6 +31,8 @@ pub enum Error {
     MemoryLimitExceeded { step: String, limit_bytes: usize },
     #[error("process I/O failed for step {step:?}: {source}")]
     Process { step: String, source: io::Error },
+    #[error("step {step:?} timed out after {timeout_ms} ms")]
+    StepTimeout { step: String, timeout_ms: u64 },
     #[error("step {step:?} failed with {status}{}", Diagnostic(.stderr))]
     StepFailed {
         step: String,
@@ -52,6 +54,12 @@ pub enum Error {
     WriteOutput(io::Error),
     #[error("step cache I/O failed at {path:?}: {source}")]
     Cache { path: PathBuf, source: io::Error },
+    #[error("step {step:?} cache dependency {path:?}: {source}")]
+    CacheDependency {
+        step: String,
+        path: PathBuf,
+        source: io::Error,
+    },
     #[error("Studio: {0}")]
     Studio(#[source] io::Error),
     #[error("could not write report {path:?}: {source}")]

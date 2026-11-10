@@ -450,10 +450,25 @@ mod tests {
 
         let body = json!({"workflow": {
             "version": "1.0", "name": "memory-test",
-            "steps": [{"id": "say", "cmd": ["echo", "hello"]}],
+            "steps": [{
+                "id": "say", "cmd": ["echo", "hello"], "timeout_ms": 5000,
+                "retry": {"attempts": 2}, "cache_files": ["Cargo.toml"], "cache_env": ["LANG"]
+            }],
             "output": "{{ steps.say.stdout }}"
         }})
         .to_string();
+        let (headers, response) = exchange(&studio, format!(
+            "POST /api/preview HTTP/1.1\r\nHost: 127.0.0.1:8080\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        )).await;
+        assert!(headers.starts_with("HTTP/1.1 200 OK\r\n"), "{headers}");
+        let draft: serde_json::Value = serde_json::from_str(&response).unwrap();
+        let step = &draft["workflow"]["steps"][0];
+        assert_eq!(step["timeout_ms"], 5000);
+        assert_eq!(step["retry"], json!({"attempts": 2, "backoff_ms": 0}));
+        assert_eq!(step["cache_files"], json!(["Cargo.toml"]));
+        assert_eq!(step["cache_env"], json!(["LANG"]));
+
         let (headers, response) = exchange(&studio, format!(
             "POST /api/run HTTP/1.1\r\nHost: 127.0.0.1:8080\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
             body.len()
@@ -462,6 +477,7 @@ mod tests {
         let result: serde_json::Value = serde_json::from_str(&response).unwrap();
         assert_eq!(result["stdout"], "hello\n");
         assert_eq!(result["telemetry"]["steps"][0]["stdout_bytes"], 6);
+        assert_eq!(result["telemetry"]["steps"][0]["attempts"], 1);
 
         let (headers, response) = exchange(&studio, format!(
             "POST /api/run/stream HTTP/1.1\r\nHost: 127.0.0.1:8080\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",

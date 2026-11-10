@@ -79,7 +79,9 @@ Use `{{ inputs.key }}` in command arguments and pass step output through `stdin`
 
 Pass `--telemetry` (`-t`) to print step and layer timings, time to first byte (TTFB), captured byte counts, and peak monitored buffer usage to stderr. Failed runs include a partial report. Failed commands also surface captured stderr above the PID ledger.
 
-Set `cache: true` on a deterministic command step to reuse its output from `.stdo/cache/` under the working directory. The SHA-256 key covers rendered arguments, stdin bytes, and the step's exit-code and output-parsing settings. If the command depends on files, environment variables, or other external state, account for those inputs in the workflow or run with `--no-cache` to bypass cache reads and writes. Telemetry reports cache hits separately from executed commands.
+Set `timeout_ms: 5000` to give each command attempt a five-second deadline, including pipe I/O. On timeout, the runner kills and reaps the direct child and marks it `TimedOut` in the PID ledger. Set `retry: { attempts: 3, backoff_ms: 250 }` to allow up to three total attempts, with a fixed 250 ms delay between failures. Attempts must be between 1 and 10, and the delay defaults to 0 ms with a maximum of 60,000 ms. Non-ignored exit failures, timeouts, and invalid JSON or JSONL can trigger retries. Retrying steps buffer piped stdin for replay and publish output only from a successful attempt. Telemetry and audit reports show the number of attempts. Step duration includes backoff.
+
+Set `cache: true` on a deterministic command step to reuse its output from `.stdo/cache/` under the working directory. The SHA-256 key covers rendered arguments, stdin bytes, exit-code and output-parsing settings, and the executable's canonical path, size, and modification time. Declare additional dependencies with `cache_files: ["{{ inputs.config_path }}"]` and `cache_env: ["LANG", "TZ"]`. File paths are relative to the working directory and must resolve to regular files within it. The key includes their contents and distinguishes unset environment variables from empty values. Pass `--no-cache` to bypass cache reads, writes, and dependency hashing. Telemetry reports cache hits separately from executed commands.
 
 ```yaml
 version: "1.0"
@@ -232,7 +234,7 @@ Open [Studio](http://127.0.0.1:8080) in your browser. With no file argument, Stu
 ### Phase 4 — Concurrent Streaming & Production Resilience (`v0.4.0`)
 
 - [x] True concurrent producer-consumer streaming across `pipe_from` chains with overlapping upstream execution and downstream TTFB.
-- [ ] Step-level `timeout_ms`, retry with backoff, and hermetic cache dependencies (`cache_files` / `cache_env`).
+- [x] Step-level `timeout_ms`, retry with backoff, and hermetic cache dependencies (`cache_files` / `cache_env`).
 
 ## License
 

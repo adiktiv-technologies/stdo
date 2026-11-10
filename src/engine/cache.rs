@@ -1,5 +1,5 @@
 use std::{
-    io,
+    env, io,
     os::unix::process::ExitStatusExt,
     path::{Path, PathBuf},
     process::ExitStatus,
@@ -7,6 +7,7 @@ use std::{
         atomic::{AtomicUsize, Ordering},
         Arc,
     },
+    time::UNIX_EPOCH,
 };
 
 use sha2::{Digest, Sha256};
@@ -17,6 +18,7 @@ use tokio::{
 
 use crate::{
     dag::schema::{CommandStep, StdoutFormat},
+    doctor::resolve_executable,
     error::Error,
 };
 
@@ -35,9 +37,15 @@ static NEXT_TEMP: AtomicUsize = AtomicUsize::new(0);
 pub(super) struct Entry(PathBuf);
 
 impl Entry {
-    pub(super) fn new(argv: &[String], step: &CommandStep, stdin: &[u8]) -> Self {
+    pub(super) async fn new(
+        id: &str,
+        argv: &[String],
+        step: &CommandStep,
+        stdin: &[u8],
+        paths: &[String],
+    ) -> Result<Self, Error> {
         let mut hash = Sha256::new();
-        hash.update(MAGIC);
+        hash.update(b"stdo cache key v2");
         hash.update((argv.len() as u64).to_be_bytes());
         for argument in argv {
             hash_field(&mut hash, argument.as_bytes());
@@ -49,7 +57,32 @@ impl Entry {
         };
         hash.update([u8::from(step.ignore_exit_code), stdout_format]);
         hash_field(&mut hash, stdin);
-        Self(Path::new(DIRECTORY).join(format!("{:x}", hash.finalize())))
+        hash_executable(&mut hash, id, &argv[0]).await?;
+        hash.update((paths.len() as u64).to_be_bytes());
+        if !paths.is_empty() {
+            let root = fs::canonicalize(".")
+                .await
+                .map_err(|source| dependency(id, ".", source))?;
+            let mut chunk = vec![0; IO_CHUNK];
+            for path in paths {
+                let digest = hash_file(id, &root, Path::new(path), &mut chunk).await?;
+                hash_field(&mut hash, path.as_bytes());
+                hash.update(digest);
+            }
+        }
+        hash.update((step.cache_env.len() as u64).to_be_bytes());
+        for name in &step.cache_env {
+            hash_field(&mut hash, name.as_bytes());
+            if let Some(value) = env::var_os(name) {
+                hash.update([1]);
+                hash_field(&mut hash, value.as_encoded_bytes());
+            } else {
+                hash.update([0]);
+            }
+        }
+        Ok(Self(
+            Path::new(DIRECTORY).join(format!("{:x}", hash.finalize())),
+        ))
     }
 
     pub(super) async fn load(
@@ -181,6 +214,95 @@ impl Entry {
             path: self.0.clone(),
             source,
         }
+    }
+}
+
+async fn hash_executable(hash: &mut Sha256, step: &str, program: &str) -> Result<(), Error> {
+    let path = resolve_executable(program).ok_or_else(|| {
+        dependency(
+            step,
+            program,
+            io::Error::new(io::ErrorKind::NotFound, "executable not found"),
+        )
+    })?;
+    let path = fs::canonicalize(&path)
+        .await
+        .map_err(|source| dependency(step, path, source))?;
+    let metadata = fs::metadata(&path)
+        .await
+        .map_err(|source| dependency(step, &path, source))?;
+    let modified = metadata
+        .modified()
+        .map_err(|source| dependency(step, &path, source))?;
+    let (sign, elapsed) = match modified.duration_since(UNIX_EPOCH) {
+        Ok(elapsed) => (0, elapsed),
+        Err(error) => (1, error.duration()),
+    };
+    hash_field(hash, path.as_os_str().as_encoded_bytes());
+    hash.update(metadata.len().to_be_bytes());
+    hash.update([sign]);
+    hash.update(elapsed.as_nanos().to_be_bytes());
+    Ok(())
+}
+
+async fn hash_file(
+    step: &str,
+    root: &Path,
+    path: &Path,
+    chunk: &mut [u8],
+) -> Result<[u8; 32], Error> {
+    if path.is_absolute() || path.as_os_str().is_empty() {
+        return Err(dependency(
+            step,
+            path,
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "expected a relative workspace file path",
+            ),
+        ));
+    }
+    let canonical = fs::canonicalize(root.join(path))
+        .await
+        .map_err(|source| dependency(step, path, source))?;
+    if !canonical.starts_with(root) {
+        return Err(dependency(
+            step,
+            path,
+            io::Error::new(io::ErrorKind::InvalidInput, "path escapes the workspace"),
+        ));
+    }
+    let metadata = fs::metadata(&canonical)
+        .await
+        .map_err(|source| dependency(step, path, source))?;
+    if !metadata.is_file() {
+        return Err(dependency(
+            step,
+            path,
+            io::Error::new(io::ErrorKind::InvalidInput, "expected a regular file"),
+        ));
+    }
+    let mut file = File::open(canonical)
+        .await
+        .map_err(|source| dependency(step, path, source))?;
+    file.set_max_buf_size(IO_CHUNK);
+    let mut hash = Sha256::new();
+    loop {
+        let count = file
+            .read(chunk)
+            .await
+            .map_err(|source| dependency(step, path, source))?;
+        if count == 0 {
+            return Ok(hash.finalize().into());
+        }
+        hash.update(&chunk[..count]);
+    }
+}
+
+fn dependency(step: &str, path: impl Into<PathBuf>, source: io::Error) -> Error {
+    Error::CacheDependency {
+        step: step.to_owned(),
+        path: path.into(),
+        source,
     }
 }
 
