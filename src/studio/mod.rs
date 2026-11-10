@@ -1,4 +1,5 @@
 //! The offline Studio serves one bounded HTTP request per loopback connection.
+mod artifact;
 mod http;
 
 use std::{
@@ -41,6 +42,7 @@ pub async fn serve(port: u16, initial: Option<&Path>) -> Result<(), Error> {
         root,
         initial: None,
         runs: Semaphore::new(1),
+        artifacts: artifact::Store::default(),
     };
     if let Some(initial) = initial {
         let relative = initial.strip_prefix(&studio.root).unwrap_or(initial);
@@ -85,6 +87,7 @@ struct Studio {
     root: PathBuf,
     initial: Option<String>,
     runs: Semaphore,
+    artifacts: artifact::Store,
 }
 
 #[derive(Default, Deserialize)]
@@ -128,10 +131,28 @@ impl Studio {
                     Err(error) => Err(error),
                 }
             }
+            Ok(request)
+                if matches!(request.method.as_str(), "GET" | "HEAD")
+                    && request.target.split('?').next() == Some("/api/artifact") =>
+            {
+                match self.open_artifact(&request.target).await {
+                    Ok((file, size, mime)) => {
+                        let _ = http::send_file(socket, file, size, mime, &request).await;
+                        return;
+                    }
+                    Err(error) => Err(error),
+                }
+            }
             Ok(request) => self.route(request).await,
             Err(error) => Err(error),
         };
         response.unwrap_or_else(Response::from).send(socket).await;
+    }
+
+    async fn open_artifact(&self, target: &str) -> Result<(File, u64, &'static str), Problem> {
+        let (_, query) = target.split_once('?').unwrap_or((target, ""));
+        let path = http::query_path(query)?;
+        self.artifacts.open(&self.root, &path).await
     }
 
     async fn route(&self, request: Request) -> Result<Response, Problem> {
@@ -180,7 +201,7 @@ impl Studio {
             (
                 _,
                 "/" | "/api/workflows" | "/api/workflow" | "/api/workflow/meta" | "/api/preview"
-                | "/api/run" | "/api/run/stream",
+                | "/api/run" | "/api/run/stream" | "/api/artifact",
             ) => Err(Problem::new(
                 "405 Method Not Allowed",
                 "Method not allowed for this endpoint",
@@ -298,13 +319,14 @@ impl Studio {
     async fn run(&self, request: Run) -> Result<Response, Problem> {
         let _permit = self.run_permit()?;
         let workflow = self.run_workflow(request.draft).await?;
-        let result = execute(
-            &workflow,
-            &request.inputs,
-            request.no_cache,
-            &Telemetry::for_studio(),
-        )
-        .await;
+        let result = self
+            .execute(
+                &workflow,
+                &request.inputs,
+                request.no_cache,
+                &Telemetry::for_studio(),
+            )
+            .await;
         Ok(Response::json(result))
     }
 
@@ -323,8 +345,9 @@ impl Studio {
         let (events, receiver) = Events::channel();
         let telemetry = Telemetry::for_studio().with_events(events.clone());
         let run = async move {
-            let mut result =
-                execute(&workflow, &request.inputs, request.no_cache, &telemetry).await;
+            let mut result = self
+                .execute(&workflow, &request.inputs, request.no_cache, &telemetry)
+                .await;
             result["live_stdout_truncated"] = json!(events.truncated());
             events.emit(EngineEvent::WorkflowFinished { result });
         };
@@ -332,42 +355,48 @@ impl Studio {
         tokio::join!(run, http::stream(socket, receiver));
         Ok(())
     }
-}
-
-async fn execute(
-    workflow: &Workflow,
-    inputs: &[String],
-    no_cache: bool,
-    telemetry: &Telemetry,
-) -> serde_json::Value {
-    let ledger = ProcessLedger::default();
-    let mut stdout = Vec::new();
-    let result = engine::run_with_options(
-        workflow,
-        inputs,
-        &ledger,
-        &mut stdout,
-        RunOptions {
-            no_cache,
-            telemetry: Some(telemetry),
-            ..RunOptions::default()
-        },
-    )
-    .await;
-    let (report, stderr, stderr_truncated) = telemetry.studio_report();
-    let pid_ledger = if result.is_err() {
-        ledger.snapshot()
-    } else {
-        Vec::new()
-    };
-    let error = result.err().map(|error| match error {
-        Error::StepFailed { step, status, .. } => format!("step {step:?} failed with {status}"),
-        other => other.to_string(),
-    });
-    json!({
-        "ok": error.is_none(), "error": error, "stdout": String::from_utf8_lossy(&stdout),
-        "stderr": stderr, "stderr_truncated": stderr_truncated, "telemetry": report, "pid_ledger": pid_ledger
-    })
+    async fn execute(
+        &self,
+        workflow: &Workflow,
+        inputs: &[String],
+        no_cache: bool,
+        telemetry: &Telemetry,
+    ) -> serde_json::Value {
+        let ledger = ProcessLedger::default();
+        let mut stdout = Vec::new();
+        let result = engine::run_with_options(
+            workflow,
+            inputs,
+            &ledger,
+            &mut stdout,
+            RunOptions {
+                no_cache,
+                telemetry: Some(telemetry),
+                ..RunOptions::default()
+            },
+        )
+        .await;
+        let (report, stderr, stderr_truncated) = telemetry.studio_report();
+        let pid_ledger = if result.is_err() {
+            ledger.snapshot()
+        } else {
+            Vec::new()
+        };
+        let artifacts = if result.is_ok() {
+            self.artifacts.register(&self.root, workflow, inputs).await
+        } else {
+            Vec::new()
+        };
+        let error = result.err().map(|error| match error {
+            Error::StepFailed { step, status, .. } => format!("step {step:?} failed with {status}"),
+            other => other.to_string(),
+        });
+        json!({
+            "ok": error.is_none(), "error": error, "stdout": String::from_utf8_lossy(&stdout),
+            "stderr": stderr, "stderr_truncated": stderr_truncated, "telemetry": report, "pid_ledger": pid_ledger,
+            "artifacts": artifacts
+        })
+    }
 }
 
 fn decode<T: serde::de::DeserializeOwned>(body: &[u8]) -> Result<T, Problem> {
@@ -417,13 +446,22 @@ mod tests {
     use tokio::io::AsyncWriteExt;
 
     async fn exchange(studio: &Studio, request: String) -> (String, String) {
+        let (headers, body) = exchange_bytes(studio, request).await;
+        (headers, String::from_utf8(body).unwrap())
+    }
+
+    async fn exchange_bytes(studio: &Studio, request: String) -> (String, Vec<u8>) {
         let (mut client, mut server) = tokio::io::duplex(4096);
         let response = async {
             client.write_all(request.as_bytes()).await.unwrap();
-            let mut response = String::new();
-            client.read_to_string(&mut response).await.unwrap();
-            let (headers, body) = response.split_once("\r\n\r\n").unwrap();
-            (headers.to_owned(), body.to_owned())
+            let mut response = Vec::new();
+            client.read_to_end(&mut response).await.unwrap();
+            let end = response
+                .windows(4)
+                .position(|part| part == b"\r\n\r\n")
+                .unwrap();
+            let headers = String::from_utf8(response[..end].to_vec()).unwrap();
+            (headers + "\r\n", response.split_off(end + 4))
         };
         tokio::join!(
             async move { studio.connection(&mut server, 8080).await },
@@ -433,11 +471,116 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn streams_wav_metadata_and_serves_only_allowed_audio_with_ranges() {
+        const AUDIO: &[u8] = b"RIFF\x04\0\0\0WAVE\xff";
+        let directory =
+            std::env::temp_dir().join(format!("stdo-studio-audio-{}", std::process::id()));
+        fs::create_dir(&directory).await.unwrap();
+        struct Fixture(PathBuf);
+        impl Drop for Fixture {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let fixture = Fixture(fs::canonicalize(directory).await.unwrap());
+        let workspace = fixture.0.join("workspace");
+        fs::create_dir(&workspace).await.unwrap();
+        let outside = fixture.0.join("outside.wav");
+        fs::write(&outside, AUDIO).await.unwrap();
+        fs::write(workspace.join("local.wav"), AUDIO).await.unwrap();
+        fs::write(workspace.join("fake.wav"), b"unrelated data")
+            .await
+            .unwrap();
+        std::os::unix::fs::symlink(&outside, workspace.join("link.wav")).unwrap();
+        let studio = Studio {
+            root: workspace,
+            initial: None,
+            runs: Semaphore::new(1),
+            artifacts: artifact::Store::default(),
+        };
+        let request = |method: &str, path: &str, headers: &str| {
+            format!(
+            "{method} /api/artifact?path={path} HTTP/1.1\r\nHost: 127.0.0.1:8080\r\n{headers}\r\n"
+        )
+        };
+        let outside = outside.to_str().unwrap();
+        for path in [outside, "fake.wav", "link.wav", "%2e%2e/outside.wav"] {
+            let (headers, _) = exchange_bytes(&studio, request("GET", path, "")).await;
+            assert!(headers.starts_with("HTTP/1.1 404 Not Found"), "{headers}");
+        }
+        let (headers, body) = exchange_bytes(&studio, request("GET", "local.wav", "")).await;
+        assert!(headers.contains("Content-Type: audio/wav"));
+        assert_eq!(body, AUDIO);
+        let (headers, _) = exchange_bytes(
+            &studio,
+            request("GET", "local.wav", "Sec-Fetch-Site: cross-site\r\n"),
+        )
+        .await;
+        assert!(headers.starts_with("HTTP/1.1 403 Forbidden"), "{headers}");
+
+        let draft = json!({"inputs":[format!("output_wav={outside}")],"workflow":{
+            "version":"1.0", "name":"audio",
+            "inputs":{"output_wav":{"type":"path","default":"missing.wav"}},
+            "steps":[
+                {"id":"speech","cmd":["sh","-c",
+                    "printf RI; sleep 0.05; printf 'FF\\004\\000\\000\\000WAVE\\377'; head -c 600000 /dev/zero"],
+                    "capture_stdout":false},
+                {"id":"summary","cmd":["echo","byte summary"],"stdin":"{{ steps.speech.exit_code }}"}
+            ]
+        }});
+        let (headers,body) = exchange(&studio,format!(
+            "POST /api/run/stream HTTP/1.1\r\nHost: 127.0.0.1:8080\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{draft}",
+            draft.to_string().len()
+        )).await;
+        assert!(headers.contains("Content-Type: text/event-stream"));
+        let events: Vec<serde_json::Value> = body
+            .lines()
+            .filter_map(|line| line.strip_prefix("data: "))
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert!(events
+            .iter()
+            .any(|event| event["type"] == "step_stdout_binary"
+                && event["id"] == "speech"
+                && event["format"] == "RIFF/WAV audio"));
+        let chunks: Vec<_> = events
+            .iter()
+            .filter(|event| event["type"] == "step_stdout_chunk")
+            .collect();
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0]["id"], "summary");
+        let result = &events.last().unwrap()["result"];
+        assert_eq!(result["artifacts"][0]["path"], outside);
+        assert_eq!(
+            result["telemetry"]["steps"][0]["stdout_bytes"],
+            AUDIO.len() + 600_000
+        );
+        assert_eq!(result["live_stdout_truncated"], false);
+
+        let (headers, body) =
+            exchange_bytes(&studio, request("GET", outside, "Range: bytes=0-1\r\n")).await;
+        assert!(
+            headers.starts_with("HTTP/1.1 206 Partial Content"),
+            "{headers}"
+        );
+        assert!(headers.contains("Content-Range: bytes 0-1/13"));
+        assert_eq!(body, b"RI");
+        let (headers, body) = exchange_bytes(&studio, request("HEAD", outside, "")).await;
+        assert!(headers.contains("Content-Length: 13"));
+        assert!(body.is_empty());
+        let (headers, body) =
+            exchange_bytes(&studio, request("GET", outside, "Range: bytes=99-\r\n")).await;
+        assert!(headers.starts_with("HTTP/1.1 416 Range Not Satisfiable"));
+        assert!(body.is_empty());
+    }
+
+    #[tokio::test]
     async fn handles_http_over_an_in_memory_stream() {
         let studio = Studio {
             root: fs::canonicalize(env!("CARGO_MANIFEST_DIR")).await.unwrap(),
             initial: None,
             runs: Semaphore::new(1),
+            artifacts: artifact::Store::default(),
         };
         let (headers, body) = exchange(
             &studio,
@@ -535,6 +678,7 @@ mod tests {
             root: PathBuf::from(env!("CARGO_MANIFEST_DIR")),
             initial: None,
             runs: Semaphore::new(1),
+            artifacts: artifact::Store::default(),
         };
         // Larger than the server's initial read buffer and the duplex capacity.
         let body = "x".repeat(8192);

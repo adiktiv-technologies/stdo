@@ -12,10 +12,25 @@ main{display:grid;grid-template-columns:minmax(0,1fr) minmax(320px,29vw);height:
 #stage{position:relative;min-width:100%;min-height:100%}#edges-layer,#nodes-layer,#layers{position:absolute;inset:0;width:100%;height:100%}#nodes-layer,#layers,#edges-layer{pointer-events:none}.layer-label{position:absolute;color:var(--muted);font:12px var(--mono);width:228px;padding-bottom:7px;border-bottom:1px solid #3c4d68}.edge{fill:none;stroke:var(--edge);stroke-width:2;opacity:.85}.edge-hit{fill:none;stroke:transparent;stroke-width:15;pointer-events:stroke;cursor:pointer}.edge-hit:hover+.edge,.edge-hit:focus+.edge{stroke:var(--error);stroke-width:3;opacity:1}.wire-preview{fill:none;stroke:var(--text);stroke-dasharray:4 5;stroke-width:2}.node{position:absolute;width:228px;height:108px;pointer-events:auto;background:#192437;border:1px solid #465775;border-radius:9px;box-shadow:0 6px 12px #060a1455}.node.selected{outline:2px solid var(--template);outline-offset:3px}.node[data-result=passed]{border-color:var(--pipe)}.node[data-result=failed]{border-color:var(--error)}.node[data-result=skipped]{opacity:.64}.node[data-result=cached]{border-color:var(--template)}.node header{cursor:grab;touch-action:none;display:flex;gap:8px;align-items:center;padding:9px 11px;border-bottom:1px solid var(--line)}.node header:active{cursor:grabbing}.node header button{margin-left:auto;padding:2px 6px;font-size:11px}.node header strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:600 13px var(--mono)}.node .kind{font:11px var(--mono);color:var(--pipe)}.node.switch .kind{color:var(--branch)}.node .summary,.node .badge{display:block;margin:8px 11px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font:12px var(--mono);color:var(--muted)}.node .badge{color:var(--text);font-size:11px}.port{position:absolute;top:47px;width:13px;height:13px;padding:0;border:2px solid #182235;background:var(--pipe);border-radius:50%;cursor:crosshair}.port.in{left:-7px}.port.out{right:-7px}.port:hover{background:#fff}.port.armed{outline:2px solid var(--text)}
 #yaml-panel{display:flex;flex-direction:column;min-height:0;background:var(--panel);border-left:1px solid var(--line)}.tabs{display:flex;gap:4px;padding:8px;border-bottom:1px solid var(--line)}.tabs button{flex:1;background:transparent}.tabs [aria-selected=true]{background:#29354a;border-color:#546485}.pane{padding:14px;overflow:auto;flex:1}.pane[hidden]{display:none}.pane h2{font-size:15px;margin:0 0 12px}.pane h3{font-size:13px;margin:16px 0 8px}.field{display:grid;gap:4px;margin:0 0 10px;color:var(--muted);font-size:12px}.field input,.field select,.field textarea{width:100%;color:var(--text);font:12px var(--mono)}.field input[type=checkbox]{width:auto;justify-self:start}.field textarea{min-height:65px;resize:vertical}.input-card{border-top:1px solid var(--line);padding-top:11px;margin-top:12px}.input-card button{font-size:12px}#yaml{display:block;width:100%;height:calc(100% - 56px);min-height:230px;resize:vertical;font:12px/1.5 var(--mono);tab-size:2}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.45 var(--mono);background:var(--bar);padding:9px;border:1px solid var(--line);border-radius:6px}#notice{min-height:35px;padding:8px 13px;border-top:1px solid var(--line);font-size:12px;color:var(--muted);overflow-wrap:anywhere}#notice[data-tone=error]{color:var(--error)}#notice[data-tone=success]{color:var(--pipe)}
 @media(max-width:820px){main{height:auto;grid-template-columns:1fr}#workspace{height:60dvh}#yaml-panel{min-height:400px;border-left:0;border-top:1px solid var(--line)}#toolbar .toolbar-group:last-child{margin-left:0}.legend{display:none}}
-.node[data-result=running]{border-color:#73aaff;box-shadow:0 0 16px #73aaff66}
+.node[data-result=running]{border-color:#73aaff;animation:running-pulse 1.5s ease-in-out infinite}
 .node[data-result=running] .badge{color:#a8caff}
+.run-spinner{display:inline-block;width:.85em;height:.85em;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;vertical-align:-.08em;animation:run-spin .75s linear infinite}
+#run[aria-busy=true]{display:inline-flex;align-items:center;gap:8px;opacity:1;font-variant-numeric:tabular-nums}
+.node[data-result=running] .badge{display:flex;align-items:center;gap:6px;font-variant-numeric:tabular-nums}
+@keyframes run-spin{to{transform:rotate(1turn)}}
+@keyframes running-pulse{50%{box-shadow:0 0 16px #73aaff99}0%,100%{box-shadow:0 0 4px #73aaff44}}
+@media(prefers-reduced-motion:reduce){.run-spinner,.node[data-result=running]{animation:none}}
 #disk-notice{color:var(--branch);padding:8px 13px;font-size:12px}
-#live-stdout{max-height:240px;overflow:auto}
+.run-progress{display:flex;align-items:baseline;flex-wrap:wrap;gap:6px;padding:9px 11px;border-inline-start:3px solid #73aaff;background:var(--bar);color:#a8caff}
+.run-progress[hidden]{display:none}
+.run-elapsed{font:12px var(--mono);font-variant-numeric:tabular-nums}
+#live-stdout{display:grid;gap:7px}
+.step-output{min-width:0;padding:8px 9px;border:1px solid var(--line);border-radius:6px}
+.step-output strong{font:600 12px var(--mono)}
+.step-output pre{max-height:200px;overflow:auto;margin:5px 0 0}
+.binary-preview{display:block;margin-top:5px;color:var(--template);font-size:12px;overflow-wrap:anywhere}
+.workflow-output audio{display:block;width:100%;margin:8px 0 4px}
+.workflow-output a{color:var(--pipe);overflow-wrap:anywhere}
 .command-builder{margin:0 0 14px}
 .command-builder h4{margin:0 0 6px;font-size:13px}
 .command-modes{display:flex;gap:2px;padding:2px;margin-bottom:8px;border:1px solid var(--line);border-radius:6px;background:var(--bar)}
@@ -1008,13 +1023,53 @@ function updateBadge(card, result) {
   card.dataset.result = result.kind === 'running' ? 'running' : result.cache_hit ? 'cached' :
     ['skipped','cancelled'].includes(result.kind) ? 'skipped' :
       ['failed','timed_out'].includes(result.kind) || (result.kind === 'exit' && result.exit_code !== 0) ? 'failed' : 'passed';
-  const text = result.kind === 'running' ? 'running…' :
-    result.duration_ms.toFixed(2) + ' ms · ' + result.status +
+  if (result.kind === 'running') {
+    const badge = element('span',undefined,'badge');
+    const timer = element('span',elapsed(result.started));
+    timer.dataset.stepElapsed = result.id;
+    badge.append(spinner(),timer);
+    card.append(badge);
+    return;
+  }
+  const text = result.duration_ms.toFixed(2) + ' ms · ' + result.status +
       (result.ttfb_ms == null ? '' : ' · TTFB ' + result.ttfb_ms.toFixed(2) + ' ms') +
       (result.attempts > 1 ? ' · attempts=' + result.attempts : '');
   const badge = element('span',text,'badge');
   badge.title = text;
   card.append(badge);
+}
+function spinner() {
+  const icon = element('span',undefined,'run-spinner');
+  icon.setAttribute('aria-hidden','true');
+  return icon;
+}
+function elapsed(started, now = performance.now()) {
+  return ((now - started) / 1000).toFixed(1) + 's';
+}
+
+function cleanDiagnostics(text) {
+  return text.replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g,'')
+    .replace(/(?:\x1b\[|\x9b)[0-?]*[ -/]*[@-~]/g,'')
+    .replace(/(?:\x1b\[|\x9b)[0-?]*[ -/]*$/g,'')
+    .replace(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏⠿]/g,'')
+    .replace(/\r\n?/g,'\n')
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g,'')
+    .replace(/\n[ \t]*(?:\n[ \t]*){2,}/g,'\n\n').trim();
+}
+
+function showArtifacts(panel, artifacts) {
+  for (const artifact of artifacts) {
+    const source = '/api/artifact?path=' + encodeURIComponent(artifact.path);
+    const audio = element('audio');
+    audio.controls = true;
+    audio.preload = 'metadata';
+    audio.src = source;
+    audio.setAttribute('aria-label',artifact.name);
+    const download = element('a','Download ' + artifact.name);
+    download.href = source;
+    download.download = artifact.name;
+    panel.append(audio,download);
+  }
 }
 function showStep(result) {
   state.results.set(result.id,result);
@@ -1050,10 +1105,58 @@ async function readRunEvents(body, consume) {
   }
 }
 
+function liveOutput(container) {
+  const cards = new Map();
+  function cardFor(id) {
+    if (!cards.has(id)) {
+      const card = element('section',undefined,'step-output');
+      const body = element('pre','Waiting for output…');
+      card.append(element('strong','[' + id + ']'),body);
+      container.append(card);
+      cards.set(id,{body,decoder:new TextDecoder(),received:false,format:null});
+    }
+    return cards.get(id);
+  }
+  function append(id,bytes,done = false) {
+    const card = cardFor(id);
+    if (card.format) return;
+    const text = card.decoder.decode(bytes,{stream:!done});
+    if (!text) return;
+    if (!card.received) card.body.textContent = '';
+    card.received = true;
+    card.body.append(text);
+    card.body.scrollTop = card.body.scrollHeight;
+  }
+  function binary(id,format) {
+    const card = cardFor(id);
+    card.format = format;
+    const summary = element('span','📦 Binary stream (' + format + ')','binary-preview');
+    card.body.replaceWith(summary);
+    card.body = summary;
+  }
+  function finish(step) {
+    if (!cards.has(step.id) && !step.stdout_bytes) return;
+    const card = cardFor(step.id);
+    if (card.format) {
+      card.body.textContent = '📦 Binary stream (' + card.format + ' · ' +
+        step.stdout_bytes.toLocaleString() + ' bytes)';
+    } else {
+      append(step.id,undefined,true);
+      if (!card.received) card.body.textContent = step.stdout_bytes ? 'Preview unavailable' : 'No stdout';
+    }
+  }
+  return {cardFor,append,binary,finish};
+}
+
 async function run() {
   if (!state.workflow || state.loading || !validCommandDraft()) return;
   const control = $('run');
+  const idleLabel = control.textContent;
+  const buttonTimer = element('span','Running… 0.0s');
   control.disabled = true;
+  control.setAttribute('aria-busy','true');
+  control.replaceChildren(spinner(),buttonTimer);
+  const started = performance.now();
   const path = state.path;
   const revision = state.revision;
   const current = () => path === state.path && revision === state.revision;
@@ -1067,37 +1170,59 @@ async function run() {
   notice('Running ' + path + '…');
 
   const result = $('results');
-  const live = element('pre','Waiting for output…');
+  const progress = element('div',undefined,'run-progress');
+  const progressLabel = element('strong','Starting workflow');
+  progressLabel.setAttribute('role','status');
+  const progressTimer = element('span','0.0s elapsed','run-elapsed');
+  progressTimer.setAttribute('aria-hidden','true');
+  progress.append(progressLabel,progressTimer);
+  const output = element('section',undefined,'workflow-output');
+  output.hidden = true;
+  const live = element('div');
   live.id = 'live-stdout';
-  result.replaceChildren(element('h3','Live step stdout'),live);
-  const decoders = new Map();
-  let lastStep = null;
-  function appendChunk(id, bytes, done = false) {
-    if (!decoders.has(id)) decoders.set(id,new TextDecoder());
-    const text = decoders.get(id).decode(bytes,{stream:!done});
-    if (!text) return;
-    if (lastStep === null) live.textContent = '';
-    if (lastStep !== id) live.append((lastStep === null ? '' : '\n') + '[' + id + ']\n');
-    live.append(text);
-    lastStep = id;
-    live.scrollTop = live.scrollHeight;
+  result.replaceChildren(progress,output,element('h3','Live step stdout'),live);
+  const preview = liveOutput(live);
+  function tick() {
+    const now = performance.now();
+    buttonTimer.textContent = 'Running… ' + elapsed(started,now);
+    const running = [...state.results.values()].filter(step => step.kind === 'running');
+    const first = running[0];
+    const label = first ? 'Running step "' + first.id + '" (Layer ' + first.layer + ')' +
+      (running.length > 1 ? ' and ' + (running.length - 1) + ' more' : '') : 'Running workflow';
+    if (progressLabel.textContent !== label) progressLabel.textContent = label;
+    progressTimer.textContent = elapsed(first?.started ?? started,now) + ' elapsed';
+    for (const timer of $('nodes-layer').querySelectorAll('[data-step-elapsed]')) {
+      const step = state.results.get(timer.dataset.stepElapsed);
+      if (step?.kind === 'running') timer.textContent = elapsed(step.started,now);
+    }
   }
+  const ticker = setInterval(tick,100);
   try {
     await readRunEvents({...payload(),inputs:overrides,no_cache:$('no-cache').checked}, event => {
       if (!current()) return false;
       if (event.type === 'layer_started') notice('Running layer ' + event.layer + '…');
-      if (event.type === 'step_started') showStep({id:event.id,kind:'running'});
-      if (event.type === 'step_stdout_chunk') appendChunk(event.id,Uint8Array.from(event.chunk));
+      if (event.type === 'step_started') {
+        showStep({id:event.id,layer:event.layer,kind:'running',started:performance.now()});
+        preview.cardFor(event.id);
+        tick();
+      }
+      if (event.type === 'step_stdout_chunk') preview.append(event.id,Uint8Array.from(event.chunk));
+      if (event.type === 'step_stdout_binary') preview.binary(event.id,event.format);
       if (event.type === 'step_finished') {
         const step = event.telemetry;
-        if (decoders.has(step.id)) appendChunk(step.id,undefined,true);
+        preview.finish(step);
         showStep(step);
+        tick();
       }
       if (event.type !== 'workflow_finished') return true;
 
       const data = event.result;
       for (const step of data.telemetry.steps) showStep(step);
-      if (lastStep === null) live.textContent = 'No live output';
+      progress.hidden = true;
+      output.hidden = false;
+      output.append(element('h3','Workflow Output'),element('pre',data.stdout || 'No output'));
+      showArtifacts(output,data.artifacts || []);
+      if (!live.childElementCount) live.textContent = 'No live output';
       if (data.live_stdout_truncated) result.append(element('p','Live preview limit reached.','quiet'));
       result.append(
         element('h3','Telemetry'),
@@ -1107,28 +1232,33 @@ async function run() {
           (step.ttfb_ms == null ? '' : ' · TTFB ' + step.ttfb_ms.toFixed(2) + ' ms') +
           (step.attempts > 1 ? ' · attempts=' + step.attempts : '') +
           '  (' + step.stdout_bytes + ' out / ' + step.stderr_bytes + ' err)').join('\n') || 'No steps ran.'),
-        element('h3','Workflow stdout'),element('pre',data.stdout || 'No output'),
-        element('h3','Stderr' + (data.stderr_truncated ? ' (excerpt)' : '')),element('pre',data.stderr || 'No diagnostics')
+        element('h3','Stderr' + (data.stderr_truncated ? ' (excerpt)' : '')),
+        element('pre',cleanDiagnostics(data.stderr) || 'No diagnostics')
       );
       if (data.pid_ledger.length) {
         result.append(element('h3','PID ledger'),element('pre',data.pid_ledger.map(process =>
           process.pid + '  ' + process.step + '  ' + process.status).join('\n')));
       }
-      notice(data.ok ? 'Workflow completed' : data.error, data.ok ? 'success' : 'error');
+      notice(data.ok ? 'Workflow completed' : cleanDiagnostics(data.error) || 'Workflow failed',
+        data.ok ? 'success' : 'error');
       return false;
     });
   } catch (error) {
-    if (current()) {
-      for (const step of state.results.values()) {
-        if (step.kind === 'running') {
-          state.results.delete(step.id);
-          const card = Array.from($('nodes-layer').children).find(card => card.dataset.step === step.id);
-          if (card) updateBadge(card,null);
-        }
+    if (current()) notice(error.message,'error');
+  } finally {
+    clearInterval(ticker);
+    progress.hidden = true;
+    for (const step of state.results.values()) {
+      if (step.kind === 'running') {
+        state.results.delete(step.id);
+        const card = Array.from($('nodes-layer').children).find(card => card.dataset.step === step.id);
+        if (card) updateBadge(card,null);
       }
-      notice(error.message,'error');
     }
-  } finally { control.disabled = false; }
+    control.removeAttribute('aria-busy');
+    control.textContent = idleLabel;
+    control.disabled = false;
+  }
 }
 
 for (const control of document.querySelectorAll('[data-tab]')) {

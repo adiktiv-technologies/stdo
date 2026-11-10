@@ -1,9 +1,13 @@
-use std::{io, time::Duration};
+use std::{
+    io::{self, SeekFrom},
+    time::Duration,
+};
 
 use crate::engine::events::EngineEvent;
 use serde_json::{json, Value};
 use tokio::{
-    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
+    fs::File,
+    io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt},
     sync::mpsc,
     time::timeout,
 };
@@ -42,6 +46,7 @@ pub(super) struct Request {
     pub method: String,
     pub target: String,
     pub body: Vec<u8>,
+    pub range: Option<String>,
 }
 
 pub(super) struct Problem {
@@ -101,7 +106,7 @@ impl Response {
         let headers = format!(
             "HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {}\r\n\
              Connection: close\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\n\
-             Content-Security-Policy: default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'\r\n\r\n",
+             Content-Security-Policy: default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; media-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'\r\n\r\n",
             self.status, self.content_type, self.body.len()
         );
         let _ = timeout(SOCKET_TIMEOUT, async {
@@ -174,6 +179,8 @@ impl Request {
         let mut origin = None;
         let mut length = None;
         let mut content_type = None;
+        let mut range = None;
+        let mut fetch_site = None;
         for line in lines {
             let (key, value) = line
                 .split_once(':')
@@ -190,6 +197,8 @@ impl Request {
                 "origin" => &mut origin,
                 "content-length" => &mut length,
                 "content-type" => &mut content_type,
+                "range" => &mut range,
+                "sec-fetch-site" => &mut fetch_site,
                 "transfer-encoding" => {
                     return Err(Problem::bad("Transfer-Encoding is unsupported"))
                 }
@@ -235,6 +244,14 @@ impl Request {
             Some(host) if origin.is_some_and(|origin| origin != format!("http://{host}")) => Some(
                 Problem::new("403 Forbidden", "Cross-origin requests are blocked"),
             ),
+            _ if target.split('?').next() == Some("/api/artifact")
+                && fetch_site == Some("cross-site") =>
+            {
+                Some(Problem::new(
+                    "403 Forbidden",
+                    "Cross-origin requests are blocked",
+                ))
+            }
             _ if method == "POST"
                 && !content_type.is_some_and(|value| {
                     value
@@ -268,6 +285,7 @@ impl Request {
         }
         let method = method.to_owned();
         let target = target.to_owned();
+        let range = range.map(str::to_owned);
         let mut body = Vec::with_capacity(length);
         body.extend_from_slice(&already_read[..present]);
         body.resize(length, 0);
@@ -279,8 +297,71 @@ impl Request {
             method,
             target,
             body,
+            range,
         })
     }
+}
+
+fn byte_range(value: &str, size: u64) -> Option<(u64, u64)> {
+    let (start, end) = value.strip_prefix("bytes=")?.split_once('-')?;
+    let last = size.checked_sub(1)?;
+    if start.is_empty() {
+        let suffix: u64 = end.parse().ok()?;
+        return (suffix > 0).then_some((size.saturating_sub(suffix), last));
+    }
+    let start: u64 = start.parse().ok()?;
+    let end = if end.is_empty() {
+        last
+    } else {
+        last.min(end.parse().ok()?)
+    };
+    (start <= end).then_some((start, end))
+}
+
+pub(super) async fn send_file(
+    socket: &mut (impl AsyncWrite + Unpin),
+    mut file: File,
+    size: u64,
+    mime: &str,
+    request: &Request,
+) -> io::Result<()> {
+    let (status, range, offset, length) = match request.range.as_deref() {
+        Some(value) => match byte_range(value, size) {
+            Some((start, end)) => (
+                "206 Partial Content",
+                format!("Content-Range: bytes {start}-{end}/{size}\r\n"),
+                start,
+                end - start + 1,
+            ),
+            None => (
+                "416 Range Not Satisfiable",
+                format!("Content-Range: bytes */{size}\r\n"),
+                0,
+                0,
+            ),
+        },
+        None => ("200 OK", String::new(), 0, size),
+    };
+    file.seek(SeekFrom::Start(offset)).await?;
+    let headers = format!(
+        "HTTP/1.1 {status}\r\nContent-Type: {mime}\r\nContent-Length: {length}\r\n{range}\
+         Accept-Ranges: bytes\r\nConnection: close\r\nCache-Control: no-store\r\n\
+         X-Content-Type-Options: nosniff\r\nCross-Origin-Resource-Policy: same-origin\r\n\r\n"
+    );
+    stream_write(socket, headers.as_bytes()).await?;
+    if request.method == "GET" && length > 0 {
+        let mut reader = file.take(length);
+        let mut chunk = [0; 64 * 1024];
+        loop {
+            let count = reader.read(&mut chunk).await?;
+            if count == 0 {
+                break;
+            }
+            stream_write(socket, &chunk[..count]).await?;
+        }
+    }
+    timeout(SOCKET_TIMEOUT, socket.shutdown()).await??;
+    Ok(())
 }
 
 pub(super) fn query_path(query: &str) -> Result<String, Problem> {
