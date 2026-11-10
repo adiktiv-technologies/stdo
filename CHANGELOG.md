@@ -7,62 +7,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Stage the speech and HTTP examples' output beside the destination and rename only after a successful write.
+
+### Changed
+
+- Record operating-system peak RSS separately from monitored buffers in the qualification benchmark.
+- Document the live Apple Silicon Ollama qualification results.
+
 ## [0.5.1](https://github.com/adiktiv-technologies/stdo/compare/v0.5.0...v0.5.1) - 2026-11-10
 
 ### Added
 
-- *(examples)* add Ollama Gemma 4 + Phonon speech, local AI triage, and generic HTTP API workflows ([#22](https://github.com/adiktiv-technologies/stdo/pull/22))
+- Gemma 4 and Phonon speech, cached local PR triage, and a retrying HTTP-to-JSONL workflow. Studio also gained live run timers, per-step output cards, binary summaries, ANSI cleanup, and inline audio playback with downloads. [#22](https://github.com/adiktiv-technologies/stdo/pull/22)
 
-### Other
+### Changed
 
-- *(benchmarks)* add parallel Bash baseline, v0.5.0 provenance, and mode trade-off matrix ([#21](https://github.com/adiktiv-technologies/stdo/pull/21))
+- Added the Parallel Bash benchmark baseline and documented how pipe modes, capture, caching, and retries compose. [#21](https://github.com/adiktiv-technologies/stdo/pull/21)
 
 ## [0.5.0](https://github.com/adiktiv-technologies/stdo/compare/v0.4.0...v0.5.0) - 2026-11-10
 
 ### Added
 
-- *(v0.5.0)* unbounded pass-through streaming, atomic pipes, qualification suite, and Studio Visual Command Builder ([#19](https://github.com/adiktiv-technologies/stdo/pull/19))
+- Bounded-memory pass-through for uncaptured stdout, atomic pipe gating, Unix process-group cleanup, executable content hashing for cache keys, and a reproducible qualification suite.
+- Studio's Visual Command Builder with editable script blocks, raw JSON sync, and shell positional bindings. [#19](https://github.com/adiktiv-technologies/stdo/pull/19)
 
 ## [0.4.0](https://github.com/adiktiv-technologies/stdo/compare/v0.3.0...v0.4.0) - 2026-11-10
 
 ### Added
 
-- *(resilience)* add step timeout_ms, retry with backoff, and hermetic cache keys ([#18](https://github.com/adiktiv-technologies/stdo/pull/18))
-- *(engine)* stream pipe_from stages concurrently and harden README/AGENTS docs ([#15](https://github.com/adiktiv-technologies/stdo/pull/15))
+- Concurrent producer-consumer streaming across eligible `pipe_from` edges. [#15](https://github.com/adiktiv-technologies/stdo/pull/15)
+- Step deadlines, retry with backoff, and cache keys that include declared file and environment dependencies. [#18](https://github.com/adiktiv-technologies/stdo/pull/18)
+
+### Fixed
+
+- Updated the README's SQLite example to pass audit data through stdin and extract values with fixed SQL. [#15](https://github.com/adiktiv-technologies/stdo/pull/15)
 
 ## [0.3.0](https://github.com/adiktiv-technologies/stdo/compare/v0.2.0...v0.3.0) - 2026-11-10
 
 ### Added
 
-- *(streaming)* add live Studio SSE execution stream, file reload, and JSONL stream routing ([#14](https://github.com/adiktiv-technologies/stdo/pull/14))
-- *(bench)* add A/B pipeline benchmark harness, TTFB metrics, and offline audit reports ([#12](https://github.com/adiktiv-technologies/stdo/pull/12))
+- Pipeline comparison benchmarks, time-to-first-byte metrics, and self-contained JSON and HTML execution reports. [#12](https://github.com/adiktiv-technologies/stdo/pull/12)
+- Live Studio execution streaming, external workflow reload, and JSONL validation and routing. [#14](https://github.com/adiktiv-technologies/stdo/pull/14)
 
-### Other
+### Changed
 
-- *(readme)* showcase embedded Studio SVG preview and streamline installation ([#11](https://github.com/adiktiv-technologies/stdo/pull/11))
+- Streamlined installation and added a Studio preview to the README. [#11](https://github.com/adiktiv-technologies/stdo/pull/11)
 
 ## [0.2.0](https://github.com/adiktiv-technologies/stdo/compare/v0.1.0...v0.2.0) - 2026-11-10
 
 ### Added
 
-- *(studio)* add zero-CDN embedded WYSIWYG workflow studio (stdo serve) ([#10](https://github.com/adiktiv-technologies/stdo/pull/10))
-- *(cache)* add SHA-256 content-addressable step cache ([#9](https://github.com/adiktiv-technologies/stdo/pull/9))
-- *(telemetry)* add --telemetry execution report and improve step error UX ([#7](https://github.com/adiktiv-technologies/stdo/pull/7))
+- Execution telemetry, captured stderr on step failures, and gallery workflows that resolve the repository from either supported working directory. [#7](https://github.com/adiktiv-technologies/stdo/pull/7)
+- SHA-256 content-addressable step caching. [#9](https://github.com/adiktiv-technologies/stdo/pull/9)
+- Embedded, zero-CDN workflow editing and execution through `stdo serve`. [#10](https://github.com/adiktiv-technologies/stdo/pull/10)
+
+### Fixed
+
+- Switched the ARM64 Linux musl binary build to a native ARM64 runner. [#6](https://github.com/adiktiv-technologies/stdo/pull/6)
 
 ## [0.1.0](https://github.com/adiktiv-technologies/stdo/compare/v0.0.1...v0.1.0) - 2026-11-10
 
 ### Added
 
-- *(examples)* [**breaking**] complete Phase 1 DAG engine milestone with runnable workflow gallery ([#5](https://github.com/adiktiv-technologies/stdo/pull/5))
-- *(engine)* execute DAGs with monitored pipes and PID reporting ([#4](https://github.com/adiktiv-technologies/stdo/pull/4))
-- *(dag)* scaffold the Phase 1 workflow engine ([#3](https://github.com/adiktiv-technologies/stdo/pull/3))
+- Workflow schema, topological scheduling, and the `stdo doctor` validator. [#3](https://github.com/adiktiv-technologies/stdo/pull/3)
+- DAG execution with monitored pipes, JSON parsing, conditional routing, safety limits, and a PID ledger. [#4](https://github.com/adiktiv-technologies/stdo/pull/4)
+- Runnable POSIX workflow gallery and end-to-end tests. [#5](https://github.com/adiktiv-technologies/stdo/pull/5)
 
-### Fixed
+### Changed
 
-- *(ci)* format code with rustfmt and resolve clippy lints
-
-### Other
-
-- *(repo)* formalize governance and release automation ([#1](https://github.com/adiktiv-technologies/stdo/pull/1))
-- add CI and release workflows; create AGENTS.md for architectural guidelines
-- update README.md for improved clarity and structure; add .gitignore entries
+- Established repository governance, release automation, and formatting and lint checks. [#1](https://github.com/adiktiv-technologies/stdo/pull/1)

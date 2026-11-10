@@ -71,7 +71,7 @@ stdo run -f examples/06-jsonl-sensor-stream.yaml
 
 With Ollama running and both models available locally, Gemma 4 answers the prompt and Phonon streams WAV bytes directly to the file writer. The default output is `/tmp/stdo-owl-fact.wav`. Use `-i` to change `llm_model`, `tts_model`, `prompt`, or `output_wav`. [Ollama speech requirements](https://docs.ollama.com/capabilities/speech)
 
-Gemma's two-attempt retry buffers its text before Phonon starts. For live text streaming into Phonon, remove the retry or set `attempts: 1`. The WAV leg streams in either case. If speech generation fails mid-stream, the destination may contain a partial file.
+Gemma's two-attempt retry buffers its text before Phonon starts. For live text streaming into Phonon, remove the retry or set `attempts: 1`. The WAV leg streams to a sibling temporary file in either case. A separate step replaces the destination only after Phonon and the staged write succeed. Failed writes clean up their temporary file. A forced kill can leave a staging file behind.
 
 ```sh
 stdo doctor -f examples/07-ollama-gemma4-phonon-speech.yaml
@@ -89,7 +89,9 @@ stdo run -f examples/08-ollama-local-pr-triage.yaml -i target_dir=src
 
 ## 09 · Resilient HTTP API to JSONL
 
-Install `curl` and `jq`. The default URL fetches recent `stdo` releases from GitHub. Set `api_url` to use any endpoint that returns a JSON array or an object with an `items` array. The workflow retains objects whose numeric `id` is at least `min_id` and validates the normalized JSONL. The atomic pipe starts the file writer only after normalization succeeds and the switch finds records. Empty and invalid responses leave the existing destination untouched. The default destination is `/tmp/stdo-api-records.jsonl`.
+Install `curl` and `jq`. The default URL fetches recent `stdo` releases from GitHub. Set `api_url` to use any endpoint that returns a JSON array or an object with an `items` array. The workflow retains objects whose numeric `id` is at least `min_id` and validates the normalized JSONL. The atomic pipe starts the file writer only after normalization succeeds and the switch finds records. The writer stages JSONL beside the destination and renames it after a successful write. Empty and invalid responses or failed writes leave the existing destination untouched. The default destination is `/tmp/stdo-api-records.jsonl`.
+
+The speech and HTTP sinks use same-directory rename for atomic replacement. Power-loss durability would also require syncing the file and directory.
 
 ```sh
 stdo doctor -f examples/09-generic-http-api-pipeline.yaml

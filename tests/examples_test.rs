@@ -188,6 +188,14 @@ impl Drop for StubWorkspace {
 }
 
 impl StubWorkspace {
+    fn new(label: &str) -> Self {
+        let path = env::temp_dir().join(format!("stdo-example-{label}-{}", std::process::id()));
+        fs::create_dir(&path).unwrap();
+        let workspace = Self(path);
+        fs::create_dir(workspace.0.join("bin")).unwrap();
+        workspace
+    }
+
     fn stub(&self, name: &str, script: &str) {
         let path = self.0.join("bin").join(name);
         fs::write(&path, format!("#!/bin/sh\nset -eu\n{script}")).unwrap();
@@ -223,10 +231,7 @@ impl StubWorkspace {
 
 #[test]
 fn external_workflows_run_offline_with_stub_ollama_and_curl() {
-    let workspace =
-        StubWorkspace(env::temp_dir().join(format!("stdo-example-stubs-{}", std::process::id())));
-    fs::create_dir(&workspace.0).unwrap();
-    fs::create_dir(workspace.0.join("bin")).unwrap();
+    let workspace = StubWorkspace::new("stubs");
     fs::create_dir(workspace.0.join("src")).unwrap();
     workspace.stub(
         "ollama",
@@ -359,6 +364,59 @@ esac
     assert!(!malformed.status.success());
     assert!(String::from_utf8_lossy(&malformed.stderr).contains("step \"normalize_jsonl\" failed"));
     assert_eq!(fs::read_to_string(&records).unwrap(), expected);
+}
+
+#[test]
+fn failed_sink_writes_preserve_existing_audio_and_jsonl() {
+    let workspace = StubWorkspace::new("sink-failure");
+    workspace.stub(
+        "ollama",
+        r#"
+case "$2" in
+  gemma4) printf '%s\n' "$4" ;;
+  phonon) IFS= read -r answer; printf 'RIFF\000\377WAVE'; [ "$answer" != fail ] ;;
+  *) exit 1 ;;
+esac
+"#,
+    );
+    workspace.stub("curl", "printf '[{\"id\":1}]\\n'\n");
+    let wav = workspace.0.join("upstream-failure.wav");
+    fs::write(&wav, b"original").unwrap();
+    let upstream_failure = workspace.invoke(
+        "run",
+        SPEECH,
+        &["-i", "output_wav=upstream-failure.wav", "-i", "prompt=fail"],
+    );
+    assert!(!upstream_failure.status.success());
+    assert!(
+        String::from_utf8_lossy(&upstream_failure.stderr).contains("step \"stream_phonon\" failed")
+    );
+    assert_eq!(fs::read(wav).unwrap(), b"original");
+
+    workspace.stub("cat", "printf 'partial output'\nexit 1\n");
+    for (file, key, target, failing_step) in [
+        (SPEECH, "output_wav", "owl fact.wav", "stage_wav"),
+        (HTTP, "output_jsonl", "records.jsonl", "atomic_commit"),
+    ] {
+        let path = workspace.0.join(target);
+        fs::write(&path, b"original").unwrap();
+        let result = workspace.invoke("run", file, &["-i", &format!("{key}={target}")]);
+        assert!(!result.status.success(), "{file}");
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        assert!(
+            stderr.contains(&format!("step \"{failing_step}\" failed")),
+            "{stderr}"
+        );
+        assert_eq!(fs::read(path).unwrap(), b"original", "{file}");
+        let temporary_prefix = format!("{target}.tmp.");
+        assert!(fs::read_dir(&workspace.0).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(&temporary_prefix)
+        }));
+    }
 }
 
 #[test]

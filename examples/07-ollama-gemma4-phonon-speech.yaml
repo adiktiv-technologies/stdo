@@ -19,9 +19,47 @@ steps:
     pipe_from: ask_gemma
     capture_stdout: false
 
-  - id: write_wav
-    cmd: [sh, -c, 'cat > "$1" && wc -c < "$1"', write-wav, "{{ inputs.output_wav }}"]
+  - id: stage_wav
+    cmd:
+      - sh
+      - -c
+      - |
+        set -eu
+        case "$1" in /*) target=$1 ;; *) target=./$1 ;; esac
+        tmp="$target.tmp.$$"
+        umask 077
+        (set -C; : > "$tmp")
+        trap 'rm -f "$tmp"' 0
+        trap 'exit 1' HUP INT TERM
+        cat > "$tmp"
+        printf '%s\n' "$$"
+        trap - 0 HUP INT TERM
+      - stage-wav
+      - "{{ inputs.output_wav }}"
     pipe_from: stream_phonon
+
+  - id: write_wav
+    cmd:
+      - sh
+      - -c
+      - |
+        set -eu
+        case "$1" in /*) target=$1 ;; *) target=./$1 ;; esac
+        IFS= read -r pid
+        case "$pid" in ''|*[!0-9]*) exit 1 ;; esac
+        tmp="$target.tmp.$pid"
+        trap 'rm -f "$tmp"' 0
+        trap 'exit 1' HUP INT TERM
+        bytes=$(wc -c < "$tmp")
+        [ ! -d "$target" ]
+        mv -f "$tmp" "$target"
+        printf '%s\n' "$bytes"
+      - write-wav
+      - "{{ inputs.output_wav }}"
+    stdin: |
+      {{ steps.stage_wav.stdout | trim }}
+      {# The dependency below waits for Phonon's successful exit as well. #}
+      {{ steps.stream_phonon.exit_code }}
 
 output: |
   Wrote {{ steps.write_wav.stdout | trim }} bytes to {{ inputs.output_wav }}
