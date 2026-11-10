@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/adiktiv-technologies/stdo/compare/v0.4.0...v0.5.0) - 2026-11-10
+
+### Added
+
+- *(v0.5.0)* unbounded pass-through streaming, atomic pipes, qualification suite, and Studio Visual Command Builder ([#19](https://github.com/adiktiv-technologies/stdo/pull/19))
+
 ## [0.4.0](https://github.com/adiktiv-technologies/stdo/compare/v0.3.0...v0.4.0) - 2026-11-10
 
 ### Added
