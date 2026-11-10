@@ -87,13 +87,13 @@ steps:
           ffmpeg -nostdin -hide_banner -loglevel error -y -stream_loop -1 -i "$bg" -i "$wav" \
             -map 0:v:0 -map 1:a:0 \
             -vf 'scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30' \
-            -c:v libx264 -preset veryfast -pix_fmt yuv420p -c:a aac -b:a 192k -shortest -movflags +faststart "$tmp"
+            -c:v libx264 -preset veryfast -pix_fmt yuv420p -c:a aac -ar 48000 -ac 2 -b:a 192k -shortest -movflags +faststart "$tmp"
         else
           ffmpeg -nostdin -hide_banner -loglevel error -y \
             -f lavfi -i 'color=c=0x0d1117:s=1280x720:r=30' -i "$wav" \
             -filter_complex "[1:a]aformat=channel_layouts=mono,compand,showwaves=s=1280x720:mode=cline:rate=30:scale=sqrt:colors=0x38bdf8[fg];[0:v][fg]overlay=format=auto,format=yuv420p[v]" \
-            -map "[v]" -map 1:a:0 -c:v libx264 -crf 28 -preset veryslow -maxrate 60k -bufsize 60k -pix_fmt yuv420p \
-            -c:a aac -ac 1 -b:a 32k -shortest -movflags +faststart "$tmp"
+            -map "[v]" -map 1:a:0 -c:v libx264 -crf 23 -preset veryfast -pix_fmt yuv420p \
+            -c:a aac -ar 48000 -ac 2 -b:a 192k -shortest -movflags +faststart "$tmp"
         fi
         bytes=$(wc -c < "$tmp")
         [ ! -d "$out" ]

@@ -58,8 +58,10 @@ main{display:grid;grid-template-columns:minmax(0,1fr) minmax(320px,29vw);height:
 .command-raw p{margin:5px 0;color:var(--error);font-size:12px}
 #help{width:32px;height:32px;min-width:32px;border-radius:50%;padding:0;display:inline-flex;align-items:center;justify-content:center;font-weight:700}
 .requirements-table{width:100%;border-collapse:collapse;font-size:12px;margin-bottom:16px}
-.requirements-table th,.requirements-table td{padding:7px 5px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line);overflow-wrap:anywhere}
-.requirements-table code{font:11px var(--mono);white-space:pre-wrap;overflow-wrap:anywhere}
+.requirements-table th,.requirements-table td{padding:7px 5px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line);white-space:nowrap;word-break:normal;overflow-wrap:normal}
+.requirements-table code{font:11px var(--mono);white-space:inherit;overflow-wrap:inherit}
+.requirements-table td:last-child{white-space:normal;overflow-wrap:anywhere;min-width:160px}
+.requirements-table td:last-child code{white-space:pre-wrap}
 .requirements-scroll{overflow-x:auto}
 .requirement-status{white-space:nowrap;font-size:11px}.requirement-status[data-ok=true]{color:var(--pipe)}.requirement-status[data-ok=false]{color:var(--error)}
 .tabs button{padding:7px 4px;font-size:12px;min-width:0}
