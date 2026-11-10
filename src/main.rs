@@ -1,34 +1,38 @@
-use std::env;
+use std::process::ExitCode;
 
-const VERSION: &str = env!("CARGO_PKG_VERSION");
+use clap::Parser;
+use stdo::{
+    cli::{Cli, Command},
+    dag::schema::Workflow,
+    doctor,
+    error::Error,
+};
+
 const WIP_NOTICE: &str = "[WIP - Phase 1 DAG engine in progress]";
 
-fn main() {
-    let args: Vec<String> = env::args().skip(1).collect();
-
-    match args.first().map(String::as_str) {
-        Some("--version" | "-V") => {
-            println!("stdo {VERSION}");
-        }
-        Some("run") => {
-            eprintln!("{WIP_NOTICE}");
-            println!("⚡ stdo v{VERSION} — Executing workflow...");
-        }
-        Some("serve") => {
-            eprintln!("{WIP_NOTICE}");
-            println!(
-                "⚡ stdo v{VERSION} — Embedded Studio UI starting on http://127.0.0.1:8080 (100% Offline)"
-            );
-        }
-        _ => {
-            println!("⚡ stdo v{VERSION} — Standard I/O Orchestrator");
-            println!("Zero-network Unix DAG workflow engine with an embedded Studio UI.\n");
-            println!("USAGE:");
-            println!("  stdo run [FILE]      Execute a workflow DAG headlessly");
-            println!(
-                "  stdo serve [FILE]    Launch the embedded offline Studio UI on 127.0.0.1:8080"
-            );
-            println!("  stdo --version       Print version information");
+fn main() -> ExitCode {
+    match dispatch(Cli::parse().command) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("stdo: {error}");
+            ExitCode::FAILURE
         }
     }
+}
+
+fn dispatch(command: Command) -> Result<(), Error> {
+    match command {
+        Command::Doctor { file } => {
+            let workflow = Workflow::read(&file)?;
+            let graph = doctor::check(&workflow)?;
+            println!(
+                "{}: {} steps in {} layers, required executables available",
+                workflow.name,
+                workflow.steps.len(),
+                graph.layers.len()
+            );
+        }
+        Command::Run { .. } | Command::Serve { .. } => eprintln!("{WIP_NOTICE}"),
+    }
+    Ok(())
 }
