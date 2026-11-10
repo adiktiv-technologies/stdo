@@ -75,7 +75,7 @@ By default, `run` and `doctor` allow up to 64 steps, 16 layers, and 16 steps per
 
 Use `{{ inputs.key }}` in command arguments and pass step output through `stdin` templates or `pipe_from`. The workflow's `output` template determines what `stdo run` writes to stdout.
 
-Pass `--telemetry` (`-t`) to print step and layer timings, captured byte counts, and peak monitored buffer usage to stderr. Failed runs include a partial report. Failed commands also surface captured stderr above the PID ledger.
+Pass `--telemetry` (`-t`) to print step and layer timings, time to first byte (TTFB), captured byte counts, and peak monitored buffer usage to stderr. Failed runs include a partial report. Failed commands also surface captured stderr above the PID ledger.
 
 Set `cache: true` on a deterministic command step to reuse its output from `.stdo/cache/` under the working directory. The SHA-256 key covers rendered arguments, stdin bytes, and the step's exit-code and output-parsing settings. If the command depends on files, environment variables, or other external state, account for those inputs in the workflow or run with `--no-cache` to bypass cache reads and writes. Telemetry reports cache hits separately from executed commands.
 
@@ -162,6 +162,20 @@ stdo run -t -f examples/01-parallel-repo-audit.yaml
 
 See the [workflow gallery](examples/README.md) for the ETL and release gate examples.
 
+### Benchmark workflows and export audit reports
+
+```sh
+stdo run -f examples/03-release-gate-switch.yaml -i severity=LOW --report audit.json
+stdo bench examples/01-parallel-repo-audit.yaml examples/02-monitored-pipe-etl.yaml \
+  --runs 5 --warmup 1 --no-cache --report comparison.html
+```
+
+`run --report` keeps workflow stdout available for piping and writes the audit to a separate file, including partial results when a readable workflow fails. It records the resolved inputs, SHA-256 hashes of the original YAML and captured stdout, and per-step timings and byte counts. Reports contain resolved input values, so treat them as sensitive if the workflow takes secrets. Use `.html` or `.htm` for a self-contained report, or another extension for JSON.
+
+`bench` accepts one or more workflows and compares them against the first workflow's median latency. It runs one warmup and five measured trials per workflow by default. The table reports min, mean, p50, p95, max, mean TTFB, peak monitored bytes, and cache hit ratio, plus per-step mean and p95. Percentiles use linear interpolation, and the cache ratio is the number of hits divided by all recorded steps. Pass `-i KEY=VALUE` for an override shared by the workflows. Cached steps can reuse results during warmup and measurement. Pass `--no-cache` to measure subprocess execution on every trial. HTML benchmark reports include four inline charts.
+
+Step TTFB measures from spawn to the first stdout chunk, or the read duration on a cache hit. Workflow TTFB is elapsed time to the first stdout from any step, with total duration as the fallback for a silent run. Benchmarks load each workflow once before its trials.
+
 ## Embedded Studio (`stdo serve`)
 
 Studio is an offline workflow editor for wiring DAG steps, editing YAML, and inspecting runs in your browser.
@@ -197,9 +211,9 @@ Open [Studio](http://127.0.0.1:8080) in your browser. With no file argument, Stu
 ### Phase 3 — Industrial Benchmarking & Streaming (`v0.3.0`)
 
 - [ ] Live Studio output streaming over server-sent events (SSE) and workflow file reload.
-- [ ] `stdo bench`: Built-in A/B/C pipeline comparison harness measuring end-to-end latency, Time-To-First-Byte (TTFB/TTFT), and peak RSS memory per node.
+- [x] `stdo bench` A/B/C comparisons with latency percentiles, TTFB, cache hit ratios, and peak monitored buffer usage.
 - [ ] Continuous JSONL line-by-line stream routing for high-frequency sensor and log pipelines.
-- [ ] Exportable offline HTML/JSON execution audit reports for air-gapped compliance.
+- [x] Offline HTML/JSON execution audits and benchmark reports.
 
 ## License
 

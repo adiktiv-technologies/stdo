@@ -2,7 +2,7 @@ use std::{
     io::{self, Write},
     process::{ExitStatus, Stdio},
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use tokio::{
@@ -31,6 +31,7 @@ pub(super) struct Captured {
 }
 
 pub(super) struct Running {
+    started: Instant,
     child: Child,
     step: String,
     input: Option<Arc<Buffer>>,
@@ -47,6 +48,7 @@ impl Running {
         ignore_exit_code: bool,
         ledger: ProcessLedger,
     ) -> Result<Self, Error> {
+        let started = Instant::now();
         let child = Command::new(&command[0])
             .args(&command[1..])
             .stdin(Stdio::piped())
@@ -57,6 +59,7 @@ impl Running {
             .map_err(|source| process_error(step, source))?;
         let entry = ledger.record(child.id().expect("new child has a PID"), step, command);
         Ok(Self {
+            started,
             child,
             step: step.to_owned(),
             input,
@@ -79,6 +82,7 @@ impl Running {
         let mut stdout_buffer = budget.buffer();
         let mut stderr_buffer = budget.buffer();
         let mut observed_status = None;
+        let mut first_byte = None;
         let write_input = async move {
             if let Some(input) = self.input {
                 match stdin.write_all(input.bytes()).await {
@@ -96,8 +100,8 @@ impl Running {
             result = async {
                 let drain = async {
                     tokio::try_join!(
-                        read_pipe(&mut stdout, &budget, step, &mut stdout_buffer),
-                        read_pipe(&mut stderr, &budget, step, &mut stderr_buffer),
+                        read_pipe(&mut stdout, &budget, step, &mut stdout_buffer, timing.as_ref().map(|_| &mut first_byte)),
+                        read_pipe(&mut stderr, &budget, step, &mut stderr_buffer, None),
                         write_input,
                     )?;
                     Ok::<_, Error>(())
@@ -143,6 +147,9 @@ impl Running {
             }
         }
         if let Some(timer) = &mut timing {
+            if let Some(at) = first_byte {
+                timer.first_byte(self.started, at);
+            }
             timer.set_streams(stdout_buffer.bytes(), stderr_buffer.bytes());
             if matches!(result, Ok(None)) {
                 timer.set_status(Status::Cancelled);
@@ -176,6 +183,7 @@ async fn read_pipe(
     budget: &Budget,
     step: &str,
     output: &mut Buffer,
+    mut first_byte: Option<&mut Option<Instant>>,
 ) -> Result<(), Error> {
     let mut chunk = budget.buffer();
     chunk.write_all(&[0; CHUNK_SIZE]).map_err(|source| {
@@ -190,6 +198,9 @@ async fn read_pipe(
             .map_err(|source| process_error(step, source))?;
         if count == 0 {
             return Ok(());
+        }
+        if let Some(first_byte) = first_byte.take() {
+            *first_byte = Some(Instant::now());
         }
         output
             .write_all(&chunk.bytes()[..count])

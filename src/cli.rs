@@ -55,9 +55,29 @@ pub enum Command {
         /// Bypass reading and writing the step cache.
         #[arg(long)]
         no_cache: bool,
+        /// Write an offline JSON or HTML execution audit.
+        #[arg(long, value_name = "PATH")]
+        report: Option<PathBuf>,
         /// Bypass graph size limits.
         #[arg(long)]
         force: bool,
+    },
+    /// Compare the performance of one or more workflows.
+    Bench {
+        #[arg(required = true, num_args = 1.., value_name = "FILES")]
+        files: Vec<PathBuf>,
+        #[arg(long, default_value_t = 5)]
+        runs: usize,
+        #[arg(long, default_value_t = 1)]
+        warmup: usize,
+        #[arg(short, long, value_name = "KEY=VALUE")]
+        input: Vec<String>,
+        /// Bypass reading and writing the step cache.
+        #[arg(long)]
+        no_cache: bool,
+        /// Write an offline JSON or HTML benchmark comparison.
+        #[arg(long, value_name = "PATH")]
+        report: Option<PathBuf>,
     },
     /// Launch the offline Studio UI on 127.0.0.1.
     Serve {

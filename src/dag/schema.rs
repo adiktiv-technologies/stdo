@@ -23,11 +23,14 @@ impl Workflow {
     }
 
     pub fn read(path: &Path) -> Result<Self, Error> {
-        let yaml = std::fs::read_to_string(path).map_err(|source| Error::ReadWorkflow {
+        Self::from_yaml(&Self::read_yaml(path)?)
+    }
+
+    pub(crate) fn read_yaml(path: &Path) -> Result<String, Error> {
+        std::fs::read_to_string(path).map_err(|source| Error::ReadWorkflow {
             path: path.to_owned(),
             source,
-        })?;
-        Self::from_yaml(&yaml)
+        })
     }
 }
 

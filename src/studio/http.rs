@@ -171,35 +171,6 @@ impl Request {
                 return Err(Problem::bad("Duplicate HTTP header"));
             }
         }
-        let host = host.ok_or_else(|| Problem::bad("Missing Host header"))?;
-        if host != format!("127.0.0.1:{port}")
-            && host != format!("localhost:{port}")
-            && !(port == 80 && matches!(host, "127.0.0.1" | "localhost"))
-        {
-            return Err(Problem::new(
-                "403 Forbidden",
-                "Use the local Studio address",
-            ));
-        }
-        if origin.is_some_and(|origin| origin != format!("http://{host}")) {
-            return Err(Problem::new(
-                "403 Forbidden",
-                "Cross-origin requests are blocked",
-            ));
-        }
-        if method == "POST"
-            && !content_type.is_some_and(|value| {
-                value
-                    .split(';')
-                    .next()
-                    .is_some_and(|mime| mime.trim().eq_ignore_ascii_case("application/json"))
-            })
-        {
-            return Err(Problem::new(
-                "415 Unsupported Media Type",
-                "Send an application/json body",
-            ));
-        }
         let length = match length {
             Some(value) if !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()) => {
                 value
@@ -221,12 +192,56 @@ impl Request {
                 "Request body exceeds 1 MiB",
             ));
         }
+        let rejection = match host {
+            None => Some(Problem::bad("Missing Host header")),
+            Some(host)
+                if host != format!("127.0.0.1:{port}")
+                    && host != format!("localhost:{port}")
+                    && !(port == 80 && matches!(host, "127.0.0.1" | "localhost")) =>
+            {
+                Some(Problem::new(
+                    "403 Forbidden",
+                    "Use the local Studio address",
+                ))
+            }
+            Some(host) if origin.is_some_and(|origin| origin != format!("http://{host}")) => Some(
+                Problem::new("403 Forbidden", "Cross-origin requests are blocked"),
+            ),
+            _ if method == "POST"
+                && !content_type.is_some_and(|value| {
+                    value
+                        .split(';')
+                        .next()
+                        .is_some_and(|mime| mime.trim().eq_ignore_ascii_case("application/json"))
+                }) =>
+            {
+                Some(Problem::new(
+                    "415 Unsupported Media Type",
+                    "Send an application/json body",
+                ))
+            }
+            _ => None,
+        };
+        let already_read = &data[header_end + 4..];
+        let present = length.min(already_read.len());
+        if let Some(problem) = rejection {
+            // Closing with unread request bytes can reset the connection on BSD.
+            // Discard the framed body within the same size and read timeout.
+            let mut remaining = length - present;
+            while remaining > 0 {
+                let count = remaining.min(chunk.len());
+                socket
+                    .read_exact(&mut chunk[..count])
+                    .await
+                    .map_err(|_| Problem::bad("Incomplete request body"))?;
+                remaining -= count;
+            }
+            return Err(problem);
+        }
         let method = method.to_owned();
         let target = target.to_owned();
         let mut body = Vec::with_capacity(length);
-        let already_read = &data[header_end + 4..];
-        body.extend_from_slice(&already_read[..length.min(already_read.len())]);
-        let present = body.len();
+        body.extend_from_slice(&already_read[..present]);
         body.resize(length, 0);
         socket
             .read_exact(&mut body[present..])

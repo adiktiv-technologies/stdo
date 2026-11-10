@@ -48,6 +48,8 @@ pub enum Error {
     Cache { path: PathBuf, source: io::Error },
     #[error("Studio: {0}")]
     Studio(#[source] io::Error),
+    #[error("could not write report {path:?}: {source}")]
+    Report { path: PathBuf, source: io::Error },
 }
 
 struct Diagnostic<'a>(&'a str);

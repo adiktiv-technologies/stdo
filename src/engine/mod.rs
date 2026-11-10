@@ -2,7 +2,7 @@ mod budget;
 mod cache;
 mod ledger;
 pub mod runner;
-mod telemetry;
+pub(crate) mod telemetry;
 pub mod template;
 
 use std::{collections::BTreeMap, io, sync::Arc};
@@ -70,6 +70,21 @@ pub struct RunOptions<'a> {
 }
 
 pub async fn run_with_options(
+    workflow: &Workflow,
+    overrides: &[String],
+    ledger: &ProcessLedger,
+    output: &mut impl io::Write,
+    options: RunOptions<'_>,
+) -> Result<(), Error> {
+    let telemetry = options.telemetry;
+    let result = run_workflow(workflow, overrides, ledger, output, options).await;
+    if let Some(telemetry) = telemetry {
+        telemetry.finish();
+    }
+    result
+}
+
+async fn run_workflow(
     workflow: &Workflow,
     overrides: &[String],
     ledger: &ProcessLedger,
@@ -183,11 +198,21 @@ pub async fn run_with_options(
             });
             let parse_json = command.parse_stdout.is_some();
             if let Some(entry) = &entry {
+                let read_started = timing.as_ref().map(|_| std::time::Instant::now());
                 match entry.load(&budget, id).await {
                     Ok(Some(captured)) if captured.status.success() || command.ignore_exit_code => {
+                        let read_finished =
+                            read_started.map(|started| (started, std::time::Instant::now()));
                         // A malformed JSON payload is a cache miss, just like a truncated entry.
                         if let Ok(value) = StepOutput::new(captured, parse_json, id) {
                             if let Some(timer) = &mut timing {
+                                if let Some((started, finished)) = read_finished {
+                                    timer.cache_read(
+                                        started,
+                                        finished,
+                                        !value.captured.stdout.bytes().is_empty(),
+                                    );
+                                }
                                 timer.set_status(Status::CacheHit(value.captured.status));
                                 timer.set_streams(
                                     value.captured.stdout.bytes(),
@@ -337,7 +362,7 @@ impl Object for StepOutput {
     }
 }
 
-fn resolve_inputs(workflow: &Workflow, overrides: &[String]) -> Result<Inputs, Error> {
+pub(crate) fn resolve_inputs(workflow: &Workflow, overrides: &[String]) -> Result<Inputs, Error> {
     let mut inputs = Inputs::new();
     for (name, input) in &workflow.inputs {
         if let Some(default) = &input.default {

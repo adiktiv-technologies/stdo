@@ -5,22 +5,20 @@ use std::{
     io,
     net::Ipv4Addr,
     path::{Component, Path, PathBuf},
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    },
+    sync::Arc,
 };
 
 use serde::Deserialize;
 use serde_json::json;
 use tokio::{
-    fs::{self, File, OpenOptions},
-    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
+    fs::{self, File},
+    io::{AsyncRead, AsyncReadExt, AsyncWrite},
     net::TcpListener,
     sync::Semaphore,
 };
 
 use crate::{
+    atomic_file,
     dag::{graph::Graph, schema::Workflow},
     doctor,
     engine::{self, ProcessLedger, RunOptions, Telemetry},
@@ -30,7 +28,6 @@ use crate::{
 use http::{Problem, Request, Response, MAX_BODY};
 
 const HTML: &str = include_str!("studio.html");
-static NEXT_TEMP: AtomicUsize = AtomicUsize::new(0);
 
 pub async fn serve(port: u16, initial: Option<&Path>) -> Result<(), Error> {
     let root = std::env::current_dir().map_err(Error::Studio)?;
@@ -153,7 +150,9 @@ impl Studio {
                 let (workflow, _) = draft.parse()?;
                 Graph::build(&workflow).map_err(|error| Problem::bad(error.to_string()))?;
                 let yaml = canonical(&workflow)?;
-                save_atomic(&path, yaml.as_bytes()).await?;
+                atomic_file::write(&path, yaml.as_bytes(), 0o666)
+                    .await
+                    .map_err(Problem::io)?;
                 Ok(inspect(&workflow, yaml))
             }
             ("DELETE", "/api/workflow") => {
@@ -342,37 +341,10 @@ fn inspect(workflow: &Workflow, yaml: String) -> Response {
     }))
 }
 
-async fn save_atomic(path: &Path, bytes: &[u8]) -> Result<(), Problem> {
-    let (temp, mut file) = loop {
-        let nonce = NEXT_TEMP.fetch_add(1, Ordering::Relaxed);
-        let temp = path.with_file_name(format!(".stdo-save-{}-{nonce}", std::process::id()));
-        match OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temp)
-            .await
-        {
-            Ok(file) => break (temp, file),
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
-            Err(error) => return Err(Problem::io(error)),
-        }
-    };
-    let result = async {
-        file.write_all(bytes).await?;
-        file.flush().await?;
-        drop(file);
-        fs::rename(&temp, path).await
-    }
-    .await;
-    if result.is_err() {
-        let _ = fs::remove_file(temp).await;
-    }
-    result.map_err(Problem::io)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::AsyncWriteExt;
 
     async fn exchange(studio: &Studio, request: String) -> (String, String) {
         let (mut client, mut server) = tokio::io::duplex(4096);
@@ -383,7 +355,11 @@ mod tests {
             let (headers, body) = response.split_once("\r\n\r\n").unwrap();
             (headers.to_owned(), body.to_owned())
         };
-        tokio::join!(studio.connection(&mut server, 8080), response).1
+        tokio::join!(
+            async move { studio.connection(&mut server, 8080).await },
+            response
+        )
+        .1
     }
 
     #[tokio::test]
@@ -421,6 +397,30 @@ mod tests {
         assert!(
             headers.starts_with("HTTP/1.1 400 Bad Request\r\n"),
             "{headers}"
+        );
+    }
+
+    #[tokio::test]
+    async fn rejects_cross_origin_post_after_consuming_its_framed_body() {
+        let studio = Studio {
+            root: PathBuf::from(env!("CARGO_MANIFEST_DIR")),
+            initial: None,
+            runs: Semaphore::new(1),
+        };
+        // Larger than the server's initial read buffer and the duplex capacity.
+        let body = "x".repeat(8192);
+        let request = format!(
+            "POST /api/workflow HTTP/1.1\r\nHost: 127.0.0.1:8080\r\nOrigin: https://example.com\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        );
+        let (headers, response) = exchange(&studio, request).await;
+        assert!(
+            headers.starts_with("HTTP/1.1 403 Forbidden\r\n"),
+            "{headers}"
+        );
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&response).unwrap(),
+            json!({"error": "Cross-origin requests are blocked"})
         );
     }
 }
