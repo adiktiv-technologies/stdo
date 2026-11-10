@@ -5,22 +5,20 @@ use std::{
     io,
     net::Ipv4Addr,
     path::{Component, Path, PathBuf},
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    },
+    sync::Arc,
 };
 
 use serde::Deserialize;
 use serde_json::json;
 use tokio::{
-    fs::{self, File, OpenOptions},
-    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
+    fs::{self, File},
+    io::{AsyncRead, AsyncReadExt, AsyncWrite},
     net::TcpListener,
     sync::Semaphore,
 };
 
 use crate::{
+    atomic_file,
     dag::{graph::Graph, schema::Workflow},
     doctor,
     engine::{self, ProcessLedger, RunOptions, Telemetry},
@@ -30,7 +28,6 @@ use crate::{
 use http::{Problem, Request, Response, MAX_BODY};
 
 const HTML: &str = include_str!("studio.html");
-static NEXT_TEMP: AtomicUsize = AtomicUsize::new(0);
 
 pub async fn serve(port: u16, initial: Option<&Path>) -> Result<(), Error> {
     let root = std::env::current_dir().map_err(Error::Studio)?;
@@ -153,7 +150,9 @@ impl Studio {
                 let (workflow, _) = draft.parse()?;
                 Graph::build(&workflow).map_err(|error| Problem::bad(error.to_string()))?;
                 let yaml = canonical(&workflow)?;
-                save_atomic(&path, yaml.as_bytes()).await?;
+                atomic_file::write(&path, yaml.as_bytes(), 0o666)
+                    .await
+                    .map_err(Problem::io)?;
                 Ok(inspect(&workflow, yaml))
             }
             ("DELETE", "/api/workflow") => {
@@ -342,37 +341,10 @@ fn inspect(workflow: &Workflow, yaml: String) -> Response {
     }))
 }
 
-async fn save_atomic(path: &Path, bytes: &[u8]) -> Result<(), Problem> {
-    let (temp, mut file) = loop {
-        let nonce = NEXT_TEMP.fetch_add(1, Ordering::Relaxed);
-        let temp = path.with_file_name(format!(".stdo-save-{}-{nonce}", std::process::id()));
-        match OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temp)
-            .await
-        {
-            Ok(file) => break (temp, file),
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
-            Err(error) => return Err(Problem::io(error)),
-        }
-    };
-    let result = async {
-        file.write_all(bytes).await?;
-        file.flush().await?;
-        drop(file);
-        fs::rename(&temp, path).await
-    }
-    .await;
-    if result.is_err() {
-        let _ = fs::remove_file(temp).await;
-    }
-    result.map_err(Problem::io)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::AsyncWriteExt;
 
     async fn exchange(studio: &Studio, request: String) -> (String, String) {
         let (mut client, mut server) = tokio::io::duplex(4096);

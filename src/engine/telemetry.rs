@@ -6,6 +6,7 @@ use std::{
 };
 
 use super::budget::{Budget, MAX_WORKFLOW_MEMORY_BYTES};
+use serde::Serialize;
 
 #[derive(Clone)]
 pub struct Telemetry {
@@ -13,6 +14,7 @@ pub struct Telemetry {
     pub(super) budget: Budget,
     records: Arc<Mutex<Records>>,
     capture_stderr: bool,
+    hash_stdout: bool,
 }
 
 impl Default for Telemetry {
@@ -22,12 +24,14 @@ impl Default for Telemetry {
             budget: Budget::default(),
             records: Arc::default(),
             capture_stderr: false,
+            hash_stdout: false,
         }
     }
 }
 
 #[derive(Default)]
 struct Records {
+    finished: Option<Instant>,
     layers: BTreeMap<usize, Duration>,
     steps: BTreeMap<(usize, usize), Step>,
 }
@@ -40,6 +44,41 @@ struct Step {
     stdout: usize,
     stderr: usize,
     diagnostic: Vec<u8>,
+    ttfb: Option<Duration>,
+    first_byte: Option<Instant>,
+    stdout_sha256: Option<String>,
+}
+
+#[derive(Serialize)]
+pub(crate) struct ExecutionTelemetry {
+    pub duration_ms: f64,
+    pub ttfb_ms: f64,
+    pub peak_bytes: usize,
+    pub limit_bytes: usize,
+    pub layers: Vec<LayerTelemetry>,
+    pub steps: Vec<StepTelemetry>,
+}
+
+#[derive(Serialize)]
+pub(crate) struct LayerTelemetry {
+    pub layer: usize,
+    pub duration_ms: f64,
+}
+
+#[derive(Serialize)]
+pub(crate) struct StepTelemetry {
+    pub id: String,
+    pub layer: usize,
+    pub status: String,
+    pub kind: &'static str,
+    pub exit_code: Option<i32>,
+    pub cache_hit: bool,
+    pub duration_ms: f64,
+    pub ttfb_ms: Option<f64>,
+    pub stdout_bytes: usize,
+    pub stderr_bytes: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stdout_sha256: Option<String>,
 }
 
 pub(super) enum Status {
@@ -68,6 +107,41 @@ impl std::fmt::Display for Status {
 }
 
 impl Telemetry {
+    pub fn for_audit() -> Self {
+        Self {
+            hash_stdout: true,
+            ..Self::default()
+        }
+    }
+
+    pub(crate) fn with_stdout_hashes(&self) -> Self {
+        Self {
+            hash_stdout: true,
+            ..self.clone()
+        }
+    }
+
+    /// Elapsed time to the first step stdout, or elapsed run time if all steps were silent.
+    pub fn first_byte_duration(&self) -> Duration {
+        let records = self.records.lock().expect("telemetry lock");
+        self.first_byte_duration_at(&records, self.duration(&records))
+    }
+
+    pub(crate) fn finish(&self) {
+        self.records
+            .lock()
+            .expect("telemetry lock")
+            .finished
+            .get_or_insert_with(Instant::now);
+    }
+
+    fn duration(&self, records: &Records) -> Duration {
+        records.finished.map_or_else(
+            || self.started.elapsed(),
+            |finished| finished.duration_since(self.started),
+        )
+    }
+
     pub(crate) fn for_studio() -> Self {
         Self {
             capture_stderr: true,
@@ -79,35 +153,78 @@ impl Telemetry {
         let records = self.records.lock().expect("telemetry lock");
         let mut stderr = Vec::new();
         let mut truncated = false;
-        let steps: Vec<_> = records.steps.iter().map(|((layer, _), step)| {
+        for step in records.steps.values() {
             stderr.extend_from_slice(&step.diagnostic);
             truncated |= step.diagnostic.len() < step.stderr;
-            let (kind, exit_code) = match &step.status {
-                Status::Exit(status) => ("exit", status.code()),
-                Status::CacheHit(status) => ("cache_hit", status.code()),
-                Status::Switch(_) => ("switch", None),
-                Status::Skipped => ("skipped", None),
-                Status::Cancelled => ("cancelled", None),
-                Status::Failed => ("failed", None),
-            };
-            serde_json::json!({
-                "id": step.id, "layer": layer, "status": step.status.to_string(), "kind": kind,
-                "exit_code": exit_code, "cache_hit": kind == "cache_hit",
-                "duration_ms": milliseconds(step.duration), "stdout_bytes": step.stdout, "stderr_bytes": step.stderr
-            })
-        }).collect();
-        let layers: Vec<_> = records.layers.iter().map(|(layer, duration)| {
-            serde_json::json!({"layer": layer, "duration_ms": milliseconds(*duration)})
-        }).collect();
-        let report = serde_json::json!({
-            "steps": steps, "layers": layers, "duration_ms": milliseconds(self.started.elapsed()),
-            "peak_bytes": self.budget.peak_bytes(), "limit_bytes": MAX_WORKFLOW_MEMORY_BYTES
-        });
+        }
         (
-            report,
+            serde_json::json!(self.snapshot_records(&records)),
             String::from_utf8_lossy(&stderr).into_owned(),
             truncated,
         )
+    }
+
+    pub(crate) fn snapshot(&self) -> ExecutionTelemetry {
+        self.snapshot_records(&self.records.lock().expect("telemetry lock"))
+    }
+
+    fn snapshot_records(&self, records: &Records) -> ExecutionTelemetry {
+        let total = self.duration(records);
+        let steps = records
+            .steps
+            .iter()
+            .map(|((layer, _), step)| {
+                let (kind, exit_code) = match &step.status {
+                    Status::Exit(status) => ("exit", status.code()),
+                    Status::CacheHit(status) => ("cache_hit", status.code()),
+                    Status::Switch(_) => ("switch", None),
+                    Status::Skipped => ("skipped", None),
+                    Status::Cancelled => ("cancelled", None),
+                    Status::Failed => ("failed", None),
+                };
+                StepTelemetry {
+                    id: step.id.clone(),
+                    layer: *layer,
+                    status: step.status.to_string(),
+                    kind,
+                    exit_code,
+                    cache_hit: kind == "cache_hit",
+                    duration_ms: milliseconds(step.duration),
+                    ttfb_ms: step.ttfb.map(milliseconds),
+                    stdout_bytes: step.stdout,
+                    stderr_bytes: step.stderr,
+                    stdout_sha256: step
+                        .stdout_sha256
+                        .clone()
+                        .or_else(|| self.hash_stdout.then(|| crate::report::sha256(b""))),
+                }
+            })
+            .collect();
+        let layers = records
+            .layers
+            .iter()
+            .map(|(layer, duration)| LayerTelemetry {
+                layer: *layer,
+                duration_ms: milliseconds(*duration),
+            })
+            .collect();
+        ExecutionTelemetry {
+            steps,
+            layers,
+            duration_ms: milliseconds(total),
+            ttfb_ms: milliseconds(self.first_byte_duration_at(records, total)),
+            peak_bytes: self.budget.peak_bytes(),
+            limit_bytes: MAX_WORKFLOW_MEMORY_BYTES,
+        }
+    }
+
+    fn first_byte_duration_at(&self, records: &Records, total: Duration) -> Duration {
+        records
+            .steps
+            .values()
+            .filter_map(|step| step.first_byte)
+            .min()
+            .map_or(total, |at| at.duration_since(self.started))
     }
 
     pub(super) fn layer(&self, number: usize) -> LayerTimer<'_> {
@@ -131,13 +248,16 @@ impl Telemetry {
                 stdout: 0,
                 stderr: 0,
                 diagnostic: Vec::new(),
+                ttfb: None,
+                first_byte: None,
+                stdout_sha256: None,
             }),
         }
     }
 
     pub fn print_report(&self, succeeded: bool) {
-        let total = self.started.elapsed();
         let records = self.records.lock().expect("telemetry lock");
+        let total = self.duration(&records);
         eprintln!(
             "Execution Telemetry ({})",
             if succeeded {
@@ -149,8 +269,13 @@ impl Telemetry {
         for (layer, duration) in &records.layers {
             eprintln!("  Layer {layer}: {:.2} ms", milliseconds(*duration));
             for (_, step) in records.steps.range((*layer, 0)..=(*layer, usize::MAX)) {
+                let ttfb = match step.ttfb {
+                    Some(duration) => format!(" | ttfb={:.2} ms", milliseconds(duration)),
+                    None if step.executed => " | ttfb=n/a".into(),
+                    None => String::new(),
+                };
                 eprintln!(
-                    "    Step {:?}: {:.2} ms | {} | stdout_bytes={} stderr_bytes={}",
+                    "    Step {:?}: {:.2} ms | {} | stdout_bytes={} stderr_bytes={}{ttfb}",
                     step.id,
                     milliseconds(step.duration),
                     step.status,
@@ -176,8 +301,8 @@ impl Telemetry {
             .filter(|step| matches!(step.status, Status::Skipped))
             .count();
         eprintln!(
-            "  Total: {:.2} ms | executed={executed} switches={switches} skipped={skipped} cached={cached} | peak_bytes={} limit_bytes={MAX_WORKFLOW_MEMORY_BYTES}",
-            milliseconds(total), self.budget.peak_bytes()
+            "  Total: {:.2} ms | executed={executed} switches={switches} skipped={skipped} cached={cached} | ttfb={:.2} ms | peak_bytes={} limit_bytes={MAX_WORKFLOW_MEMORY_BYTES}",
+            milliseconds(total), milliseconds(self.first_byte_duration_at(&records, total)), self.budget.peak_bytes()
         );
     }
 }
@@ -207,6 +332,18 @@ pub(super) struct StepTimer {
 }
 
 impl StepTimer {
+    pub(super) fn first_byte(&mut self, started: Instant, at: Instant) {
+        let record = self.record.as_mut().expect("active step");
+        record.ttfb = Some(at.duration_since(started));
+        record.first_byte = Some(at);
+    }
+
+    pub(super) fn cache_read(&mut self, started: Instant, at: Instant, has_stdout: bool) {
+        let record = self.record.as_mut().expect("active step");
+        record.ttfb = Some(at.duration_since(started));
+        record.first_byte = has_stdout.then_some(at);
+    }
+
     pub(super) fn set_status(&mut self, status: Status) {
         self.record.as_mut().expect("active step").status = status;
     }
@@ -219,6 +356,9 @@ impl StepTimer {
         let record = self.record.as_mut().expect("active step");
         record.stdout = stdout.len();
         record.stderr = stderr.len();
+        if self.telemetry.hash_stdout {
+            record.stdout_sha256 = Some(crate::report::sha256(stdout));
+        }
         if self.telemetry.capture_stderr {
             record
                 .diagnostic
