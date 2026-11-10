@@ -1,0 +1,7 @@
+version: '1.0'
+name: parallel-bash-baseline
+description: Run the standalone Bash qualification pipeline from the repository root.
+steps:
+  - id: bash_pipeline
+    cmd: [bash, benchmarks/run_qualification.sh, --bash-baseline, parallel]
+output: '{{ steps.bash_pipeline.stdout | trim }}'
