@@ -16,6 +16,30 @@ main{display:grid;grid-template-columns:minmax(0,1fr) minmax(320px,29vw);height:
 .node[data-result=running] .badge{color:#a8caff}
 #disk-notice{color:var(--branch);padding:8px 13px;font-size:12px}
 #live-stdout{max-height:240px;overflow:auto}
+.command-builder{margin:0 0 14px}
+.command-builder h4{margin:0 0 6px;font-size:13px}
+.command-modes{display:flex;gap:2px;padding:2px;margin-bottom:8px;border:1px solid var(--line);border-radius:6px;background:var(--bar)}
+.command-modes button{flex:1;background:transparent;border-color:transparent;font-size:12px}
+.command-modes [aria-pressed=true]{background:#29354a;border-color:#546485}
+.command-rows{display:grid;gap:5px}
+.command-arg{min-width:0;padding:5px 6px;background:var(--bar);border:1px solid var(--line);border-radius:6px}
+.command-arg[data-block=true]{border-inline-start:2px solid var(--template)}
+.command-arg-head,.command-arg-actions,.command-footer{display:flex;align-items:center;gap:4px}
+.command-arg-head{min-width:0;flex-wrap:wrap}
+.command-index,.command-role,.command-lines{font:11px var(--mono)}
+.command-index{color:var(--pipe)}
+.command-role,.command-lines{color:var(--muted)}
+.command-arg-actions{margin-left:auto}
+.command-arg-actions button,.command-footer button{padding:3px 5px;font-size:11px}
+.command-arg-actions button:disabled{cursor:default}
+.command-arg input,.command-arg textarea,.command-raw textarea{width:100%;font:12px/1.5 var(--mono);margin-top:4px;tab-size:2}
+.command-arg textarea{field-sizing:content;min-height:3.5em;max-height:18em;resize:vertical}
+.command-arg textarea,.command-raw textarea{display:block}
+.command-arg textarea[hidden]{display:none}
+.command-footer{margin-top:7px;flex-wrap:wrap}
+.command-raw textarea{min-height:9em;resize:vertical}
+.command-raw textarea[aria-invalid=true]{border-color:var(--error)}
+.command-raw p{margin:5px 0;color:var(--error);font-size:12px}
 </style>
 </head>
 <body>
@@ -205,7 +229,9 @@ async function pollDisk() {
     notice('Reloaded ' + path + ' from disk' + (data.doctor.ok ? '.' : ' · ' + data.doctor.error),
       data.doctor.ok ? 'success' : 'error');
   } catch (error) {
-    if (current()) diskNotice('Cannot reload from disk: ' + error.message);
+    if (current() && !(error instanceof TypeError) && ![502,503,504].includes(error.status)) {
+      diskNotice('Cannot reload from disk: ' + error.message);
+    }
   } finally {
     state.polling = false;
   }
@@ -513,6 +539,229 @@ function jsonField(label, value, test, change, multiline = true) {
     }
   },multiline);
 }
+function commandRole(args,index) {
+  const executable = args[0]?.split('/').pop();
+  if (['sh','bash','zsh'].includes(executable) && args[1] === '-c') {
+    return ['shell','inline -c','script body'][index] ?? 'bound to $' + (index - 3);
+  }
+  if (index === 0) return 'executable';
+  return args[index].startsWith('-') ? 'flag' : 'argument';
+}
+function commandLanguage(args,index) {
+  const executable = args[0]?.split('/').pop();
+  if (index === 2 && args[1] === '-c' && ['sh','bash','zsh'].includes(executable)) {
+    return executable + ' script';
+  }
+  if (index === 2 && args[1] === '-c' && /^python[\d.]*$/.test(executable)) return 'Python script';
+  const awkParameter = args[2]?.match(/\bawk\s+["']?\$(\d+)\b/);
+  if (index > 0 && (executable === 'awk' ||
+      (commandRole(args,index).startsWith('bound to $') && awkParameter && Number(awkParameter[1]) === index - 3))) {
+    return 'awk / script';
+  }
+  if (index > 0 && ['sqlite3','psql'].includes(executable)) return 'SQL';
+  return 'multiline';
+}
+const hasLineBreak = value => /[\r\n]/.test(value);
+
+function commandBuilder(step) {
+  const builder = element('section',undefined,'command-builder');
+  builder.setAttribute('aria-labelledby','command-arguments-heading');
+  const heading = element('h4','Command arguments');
+  heading.id = 'command-arguments-heading';
+  const modes = element('div',undefined,'command-modes');
+  modes.setAttribute('role','group');
+  modes.setAttribute('aria-label','Command editor mode');
+  const visual = element('div');
+  const rows = element('div',undefined,'command-rows');
+  const footer = element('div',undefined,'command-footer');
+  visual.append(rows,footer);
+  const raw = element('div',undefined,'command-raw');
+  const json = element('textarea');
+  json.id = 'command-arguments-json';
+  json.setAttribute('aria-label','Command arguments (JSON array)');
+  json.setAttribute('aria-describedby','command-arguments-error');
+  json.spellcheck = false;
+  const error = element('p');
+  error.id = 'command-arguments-error';
+  error.setAttribute('aria-live','polite');
+  error.hidden = true;
+  raw.append(json,error);
+  const views = [];
+  const visualButton = button('Visual Builder',() => {
+    if (json.getAttribute('aria-invalid') === 'true') {
+      json.focus();
+      return;
+    }
+    showMode(false);
+  });
+  const rawButton = button('{ } Raw JSON',() => showMode(true));
+  modes.append(visualButton,rawButton);
+  builder.append(heading,modes,visual,raw);
+
+  function showMode(useRaw) {
+    visual.hidden = useRaw;
+    raw.hidden = !useRaw;
+    visualButton.setAttribute('aria-pressed',String(!useRaw));
+    rawButton.setAttribute('aria-pressed',String(useRaw));
+  }
+  function syncVisualEdit() {
+    json.value = JSON.stringify(step.cmd,null,2);
+    changed(false);
+  }
+  function editRows(focusIndex,part = 'value',selection) {
+    renderRows();
+    const target = rows.children[focusIndex]?.querySelector('[data-command-part="' + part + '"]');
+    target?.focus();
+    if (selection) target?.setSelectionRange(...selection);
+  }
+  function addArgument(block) {
+    if (!editAllowed()) return;
+    step.cmd.push('');
+    views.push(block ? {block:true} : {});
+    syncVisualEdit();
+    editRows(step.cmd.length - 1);
+  }
+  footer.append(button('+ Add Argument',() => addArgument(false)),
+    button('+ Add Multiline Script',() => addArgument(true)));
+
+  function renderRows() {
+    rows.replaceChildren();
+    const refreshLabels = [];
+    for (const [index,value] of step.cmd.entries()) {
+      const view = views[index] ??= {};
+      const block = view.block ?? (hasLineBreak(value) || value.length > 50);
+      const row = element('div',undefined,'command-arg');
+      row.dataset.block = String(block);
+      const head = element('div',undefined,'command-arg-head');
+      const role = element('span',commandRole(step.cmd,index),'command-role');
+      const lines = element('span',undefined,'command-lines');
+      const actions = element('div',undefined,'command-arg-actions');
+      const control = element(block ? 'textarea' : 'input');
+      if (!block) control.type = 'text';
+      control.id = 'command-argument-' + index;
+      control.dataset.commandPart = 'value';
+      control.value = value;
+      control.spellcheck = false;
+      control.hidden = block && Boolean(view.collapsed);
+      const action = (symbol,label,part,callback) => {
+        const item = button(symbol,callback);
+        item.dataset.commandPart = part;
+        item.setAttribute('aria-label',label + ' argument #' + index);
+        item.title = item.getAttribute('aria-label');
+        actions.append(item);
+        return item;
+      };
+      function move(offset) {
+        if (!editAllowed()) return;
+        const next = index + offset;
+        [step.cmd[index],step.cmd[next]] = [step.cmd[next],step.cmd[index]];
+        [views[index],views[next]] = [views[next],views[index]];
+        syncVisualEdit();
+        editRows(next,view.collapsed ? 'collapse' : 'value');
+      }
+      const up = action('↑','Move up','up',() => move(-1));
+      up.disabled = index === 0;
+      const down = action('↓','Move down','down',() => move(1));
+      down.disabled = index === step.cmd.length - 1;
+      const layout = action(block ? 'Line' : 'Block',block ? 'Use single line for' : 'Use code block for',
+        'layout',() => {
+          view.block = !block;
+          view.collapsed = false;
+          editRows(index);
+        });
+      function refreshLabel() {
+        role.textContent = commandRole(step.cmd,index);
+        control.setAttribute('aria-label','Argument #' + index + ', ' + role.textContent);
+        if (block) {
+          const count = step.cmd[index].split(/\r\n|\r|\n/).length;
+          lines.textContent = commandLanguage(step.cmd,index) + ' · ' + count + (count === 1 ? ' line' : ' lines');
+          control.rows = Math.min(12,Math.max(2,count));
+          layout.disabled = hasLineBreak(step.cmd[index]);
+          layout.title = layout.disabled ? 'Remove line breaks to use a single line' : layout.getAttribute('aria-label');
+        }
+      }
+      if (block) {
+        const collapse = action(view.collapsed ? '+' : '−',view.collapsed ? 'Expand' : 'Collapse','collapse',() => {
+          view.collapsed = !view.collapsed;
+          editRows(index,'collapse');
+        });
+        collapse.setAttribute('aria-expanded',String(!view.collapsed));
+        collapse.setAttribute('aria-controls',control.id);
+      }
+      action('×','Delete','delete',() => {
+        if (!editAllowed()) return;
+        step.cmd.splice(index,1);
+        views.splice(index,1);
+        syncVisualEdit();
+        const next = Math.min(index,step.cmd.length - 1);
+        editRows(next,views[next]?.collapsed ? 'collapse' : 'value');
+        if (next < 0) footer.firstElementChild.focus();
+      });
+      head.append(element('span','#' + index,'command-index'),role,lines,actions);
+      row.append(head,control);
+      rows.append(row);
+      refreshLabels.push(refreshLabel);
+      refreshLabel();
+
+      function updateArgument(next,start,end) {
+        if (!editAllowed()) return;
+        step.cmd[index] = next;
+        syncVisualEdit();
+        if (!block && (hasLineBreak(next) || (view.block === undefined && next.length > 50))) {
+          view.block = true;
+          editRows(index,'value',[start,end]);
+        } else {
+          for (const refresh of refreshLabels) refresh();
+        }
+      }
+      control.addEventListener('input',() => updateArgument(control.value,control.selectionStart,control.selectionEnd));
+      if (!block) control.addEventListener('paste',event => {
+        const pasted = event.clipboardData.getData('text/plain');
+        if (!hasLineBreak(pasted)) return;
+        event.preventDefault();
+        const start = control.selectionStart;
+        const inserted = pasted.replace(/\r\n|\r/g,'\n');
+        const caret = start + inserted.length;
+        updateArgument(control.value.slice(0,start) + inserted + control.value.slice(control.selectionEnd),caret,caret);
+      });
+    }
+    if (!step.cmd.length) rows.append(element('div','Add an executable to begin.','quiet'));
+  }
+
+  function updateRaw() {
+    if (!editAllowed()) return;
+    let args;
+    try {
+      args = JSON.parse(json.value);
+      if (!Array.isArray(args) || !args.every(arg => typeof arg === 'string')) throw new Error();
+    } catch {
+      json.setAttribute('aria-invalid','true');
+      error.textContent = 'Enter a JSON array of strings.';
+      error.hidden = false;
+      return;
+    }
+    json.removeAttribute('aria-invalid');
+    error.hidden = true;
+    if (args.length === step.cmd.length && args.every((arg,index) => arg === step.cmd[index])) return;
+    step.cmd = args;
+    views.length = 0;
+    renderRows();
+    changed(false);
+  }
+  json.addEventListener('input',updateRaw);
+  json.addEventListener('change',updateRaw);
+  json.value = JSON.stringify(step.cmd,null,2);
+  renderRows();
+  showMode(false);
+  return builder;
+}
+function validCommandDraft() {
+  const raw = $('command-arguments-json');
+  if (state.raw || raw?.getAttribute('aria-invalid') !== 'true') return true;
+  tab('edit');
+  raw.focus();
+  return false;
+}
 function rewriteTemplates(pattern, previous, next) {
   const replace = text => text.replace(pattern,(full,id) => {
     if (id !== previous) return full;
@@ -582,9 +831,7 @@ function renderEditor() {
         value && typeof value === 'object' && !Array.isArray(value) && Object.values(value).every(target => typeof target === 'string'),
         value => change('cases',value)));
     } else {
-      pane.append(jsonField('Command arguments (JSON array)',step.cmd,value =>
-        Array.isArray(value) && value.length > 0 && value.every(arg => typeof arg === 'string'),
-        value => change('cmd',value)));
+      pane.append(commandBuilder(step));
       pane.append(textField('Stdin template',step.stdin,value => {
         step.stdin = value || null;
         if (value && step.pipe_from) { delete step.pipe_from; delete step.pipe_mode; changed(); }
@@ -714,7 +961,7 @@ function discardDraft() {
   return !state.dirty || confirm('Discard the unsaved workflow changes?');
 }
 async function save() {
-  if (!state.workflow || state.loading) return;
+  if (!state.workflow || state.loading || !validCommandDraft()) return;
   if (!$('disk-notice').hidden && !confirm('Replace the externally changed file with this draft?')) return;
   const control = $('save');
   control.disabled = true;
@@ -739,7 +986,7 @@ async function save() {
   finally { control.disabled = false; }
 }
 async function validate(apply = false) {
-  if (!state.workflow || state.loading) return;
+  if (!state.workflow || state.loading || !validCommandDraft()) return;
   const revision = state.revision;
   try {
     const data = await api('/api/preview','POST',payload());
@@ -804,7 +1051,7 @@ async function readRunEvents(body, consume) {
 }
 
 async function run() {
-  if (!state.workflow || state.loading) return;
+  if (!state.workflow || state.loading || !validCommandDraft()) return;
   const control = $('run');
   control.disabled = true;
   const path = state.path;
