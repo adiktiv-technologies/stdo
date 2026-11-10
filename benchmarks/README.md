@@ -19,18 +19,29 @@ stdo run -f benchmarks/parallel-bash-baseline.yaml
 
 ## Reference run
 
-Darwin arm64, release-profile build of `stdo 0.5.0` from release commit `d6d7e7d`, 15 measured trials and two warmups per mode.
+Darwin arm64, release-profile build of `stdo 0.5.1` from release commit `5f25b98`, 15 measured trials and two warmups per mode. The maintainer ran the benchmark on the Apple Silicon host.
 
-| Mode | Wall p50 (ms) | Wall p95 (ms) | Mean TTFB (ms) | Peak monitored bytes | Cache hits |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| Sequential Bash | 237.00 | 259.70 | 62.04 | n/a | n/a |
-| Parallel Bash | 116.00 | 119.50 | 61.21 | n/a | n/a |
-| Cold stdo (`--no-cache`) | 118.74 | 130.69 | 56.41 | 393,233 | 0% |
-| Warm stdo | 61.66 | 63.00 | 3.85 | 262,178 | 60% |
+| Mode | Wall p50 (ms) | Wall p95 (ms) | Mean TTFB (ms) | Peak monitored bytes | OS max RSS (KiB) | Cache hits |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Sequential Bash | 222.00 | 237.20 | 59.06 | n/a | 2,192 | n/a |
+| Parallel Bash | 110.00 | 116.00 | 58.97 | n/a | 2,160 | n/a |
+| Cold stdo (`--no-cache`) | 118.59 | 121.67 | 54.84 | 393,233 | 4,112 | 0% |
+| Warm stdo | 63.22 | 63.74 | 4.86 | 262,178 | 4,000 | 60% |
 
-Cold `stdo` was close to Parallel Bash at p50 and had a higher p95 in this run. Warm `stdo` showed median speedups of **1.88×** over Parallel Bash and **3.84×** over Sequential Bash.
+Cold `stdo` was 8.59 ms behind Parallel Bash at p50 in this run. Warm `stdo` showed median speedups of **1.74×** over Parallel Bash and **3.51×** over Sequential Bash.
 
 Bash wall time comes from the shell's `time` keyword. Separate executions estimate Bash TTFB from the earliest completed one-line worker, including `jq` timestamp overhead. `stdo bench` measures the first stdout chunk from any step with its internal clock. Both calculate percentiles by linear interpolation. Peak monitored bytes count `stdo` buffers only and are separate from process RSS. This workload measures scheduling overlap and cache reuse with deliberately delayed workers. JSONL validation and process-group cleanup are covered by qualification tests.
+
+The suite measures RSS in separate runs using `/usr/bin/time -l` on macOS or GNU `/usr/bin/time -v` on Linux. It reports the largest OS-provided peak among the runs for each mode in KiB. This value follows the platform tool's accounting and represents neither the sum of concurrent process RSS nor the monitored-buffer budget. If the tool cannot report RSS, the suite prints `n/a`.
+
+## Live Ollama qualification
+
+These are observed step timings from a live Apple Silicon run reported by the maintainer. They are separate from the synthetic Bash comparison and its OS RSS samples.
+
+| Workflow | Observed step timings | Output or cache result | Peak monitored buffers |
+| --- | --- | --- | --- |
+| [07 · Gemma 4 to Phonon speech](../examples/07-ollama-gemma4-phonon-speech.yaml) | `ask_gemma` 15.8 s, `stream_phonon` 942 ms | 814,124-byte WAV | 402 KB |
+| [08 · Local PR triage](../examples/08-ollama-local-pr-triage.yaml) | Cold Gemma 4 19.5 s, warm cache hit 0.41 ms | SHA-256 cache reused the triage result | n/a |
 
 Run the adversarial qualification tests separately.
 

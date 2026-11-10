@@ -38,7 +38,22 @@ steps:
       "false": empty_response
 
   - id: atomic_commit
-    cmd: [sh, -c, 'cat > "$1"', write-jsonl, "{{ inputs.output_jsonl }}"]
+    cmd:
+      - sh
+      - -c
+      - |
+        set -eu
+        case "$1" in /*) target=$1 ;; *) target=./$1 ;; esac
+        tmp="$target.tmp.$$"
+        umask 077
+        (set -C; : > "$tmp")
+        trap 'rm -f "$tmp"' 0
+        trap 'exit 1' HUP INT TERM
+        cat > "$tmp"
+        [ ! -d "$target" ]
+        mv -f "$tmp" "$target"
+      - write-jsonl
+      - "{{ inputs.output_jsonl }}"
     pipe_from: normalize_jsonl
     pipe_mode: atomic
 
