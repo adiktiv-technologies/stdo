@@ -30,9 +30,11 @@ impl Graph {
         let mut live_sources = vec![None; workflow.steps.len()];
         for (layer, indices) in self.layers.iter().enumerate() {
             for &index in indices {
-                // A cache key for a consumer needs the complete stdin.
-                let source = self.stream_sources[index].filter(|_| {
-                    matches!(&workflow.steps[index].kind, StepKind::Command(step) if no_cache || !step.cache)
+                // Cache keys and retries need complete stdin. A retrying
+                // producer only exposes the output of its successful attempt.
+                let source = self.stream_sources[index].filter(|&source| {
+                    matches!(&workflow.steps[index].kind, StepKind::Command(step) if !step.retries() && (no_cache || !step.cache))
+                        && matches!(&workflow.steps[source].kind, StepKind::Command(step) if !step.retries())
                 });
                 let group = self.dependencies[index]
                     .iter()
@@ -82,6 +84,7 @@ impl Graph {
             let location = format!("step {:?}", step.id);
             let templates = match &step.kind {
                 StepKind::Command(command) => {
+                    command.validate_options(&location)?;
                     if command.cmd.first().is_none_or(String::is_empty) {
                         return Err(Error::InvalidWorkflow(format!(
                             "{location} has an empty cmd"
@@ -100,6 +103,24 @@ impl Graph {
                             )));
                         }
                         stream_sources[index] = Some(source);
+                    }
+                    for path in &command.cache_files {
+                        let location = format!("cache_files for {location}");
+                        let template = environment.template_from_str(path).map_err(|source| {
+                            Error::Template {
+                                location: location.clone(),
+                                source,
+                            }
+                        })?;
+                        if template
+                            .undeclared_variables(true)
+                            .iter()
+                            .any(|name| name != "inputs" && !name.starts_with("inputs."))
+                        {
+                            return Err(Error::InvalidWorkflow(format!(
+                                "{location} may only reference inputs"
+                            )));
+                        }
                     }
                     command.cmd.iter().chain(&command.stdin).map(String::as_str)
                 }

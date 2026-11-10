@@ -11,6 +11,7 @@ pub struct ProcessLedger(Arc<Mutex<Vec<Process>>>);
 enum State {
     Exited(i32),
     Killed,
+    TimedOut,
     StillRunningCheckManually,
 }
 
@@ -19,6 +20,7 @@ impl State {
         match self {
             Self::Exited(code) => format!("Exited({code})"),
             Self::Killed => "Killed".into(),
+            Self::TimedOut => "TimedOut".into(),
             Self::StillRunningCheckManually => "StillRunningCheckManually".into(),
         }
     }
@@ -61,6 +63,10 @@ impl ProcessLedger {
             )
         };
         self.0.lock().expect("process ledger lock")[index].state = state;
+    }
+
+    pub(super) fn timed_out(&self, index: usize) {
+        self.0.lock().expect("process ledger lock")[index].state = State::TimedOut;
     }
 
     pub fn print_report(&self) {

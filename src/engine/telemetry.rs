@@ -44,6 +44,7 @@ struct Step {
     duration: Duration,
     status: Status,
     executed: bool,
+    attempts: u32,
     stdout: usize,
     stderr: usize,
     diagnostic: Vec<u8>,
@@ -76,6 +77,7 @@ pub(crate) struct StepTelemetry {
     pub kind: &'static str,
     pub exit_code: Option<i32>,
     pub cache_hit: bool,
+    pub attempts: u32,
     pub duration_ms: f64,
     pub ttfb_ms: Option<f64>,
     pub stdout_bytes: usize,
@@ -91,6 +93,7 @@ pub(super) enum Status {
     Skipped,
     Cancelled,
     Failed,
+    TimedOut,
 }
 
 impl std::fmt::Display for Status {
@@ -105,6 +108,7 @@ impl std::fmt::Display for Status {
             Self::Skipped => formatter.write_str("skipped"),
             Self::Cancelled => formatter.write_str("cancelled"),
             Self::Failed => formatter.write_str("failed"),
+            Self::TimedOut => formatter.write_str("timed out"),
         }
     }
 }
@@ -239,6 +243,7 @@ impl Telemetry {
                 duration: Duration::ZERO,
                 status: Status::Failed,
                 executed: false,
+                attempts: 0,
                 stdout: 0,
                 stderr: 0,
                 diagnostic: Vec::new(),
@@ -271,8 +276,13 @@ impl Telemetry {
                     None if step.executed => " | ttfb=n/a".into(),
                     None => String::new(),
                 };
+                let attempts = if step.attempts > 1 {
+                    format!(" | attempts={}", step.attempts)
+                } else {
+                    String::new()
+                };
                 eprintln!(
-                    "    Step {:?}: {:.2} ms | {} | stdout_bytes={} stderr_bytes={}{ttfb}",
+                    "    Step {:?}: {:.2} ms | {} | stdout_bytes={} stderr_bytes={}{ttfb}{attempts}",
                     step.id,
                     milliseconds(step.duration),
                     step.status,
@@ -351,7 +361,7 @@ impl StepTimer {
     pub(super) fn first_byte(&mut self, started: Instant, at: Instant) {
         let record = self.record.as_mut().expect("active step");
         record.ttfb = Some(at.duration_since(started));
-        record.first_byte = Some(at);
+        record.first_byte.get_or_insert(at);
     }
 
     pub(super) fn cache_read(&mut self, started: Instant, at: Instant, has_stdout: bool) {
@@ -365,7 +375,11 @@ impl StepTimer {
     }
 
     pub(super) fn spawned(&mut self) {
-        self.record.as_mut().expect("active step").executed = true;
+        let record = self.record.as_mut().expect("active step");
+        record.executed = true;
+        record.attempts += 1;
+        record.ttfb = None;
+        record.status = Status::Failed;
     }
 
     pub(super) fn set_streams(&mut self, stdout: &[u8], stderr: &[u8]) {
@@ -376,6 +390,7 @@ impl StepTimer {
             record.stdout_sha256 = Some(crate::report::sha256(stdout));
         }
         if self.telemetry.capture_stderr {
+            record.diagnostic.clear();
             record
                 .diagnostic
                 .extend_from_slice(&stderr[..stderr.len().min(16 * 1024)]);
@@ -412,6 +427,7 @@ impl Step {
             Status::Skipped => ("skipped", None),
             Status::Cancelled => ("cancelled", None),
             Status::Failed => ("failed", None),
+            Status::TimedOut => ("timed_out", None),
         };
         StepTelemetry {
             id: self.id.clone(),
@@ -420,6 +436,7 @@ impl Step {
             kind,
             exit_code,
             cache_hit: kind == "cache_hit",
+            attempts: self.attempts,
             duration_ms: milliseconds(self.duration),
             ttfb_ms: self.ttfb.map(milliseconds),
             stdout_bytes: self.stdout,
