@@ -145,7 +145,8 @@ fn release_readiness_renders_markdown_and_valid_json() {
             ".github/",
             ".claude/",
             "release-plz.toml",
-            "assets/"
+            "assets/",
+            "benchmarks/"
         ])
     );
     assert_eq!(

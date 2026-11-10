@@ -407,6 +407,7 @@ function finishWire(targetId) {
     } else {
       if (target.pipe_from && !confirm('Replace this step’s pipe with a stdin template?')) return;
       delete target.pipe_from;
+      delete target.pipe_mode;
       target.stdin = target.stdin ? target.stdin + '\n' + reference : reference;
     }
   }
@@ -450,7 +451,10 @@ function drawEdges() {
     layer.append(hit,path(d,'edge '+kind));
   }
   for (const step of state.workflow.steps) {
-    if (step.pipe_from) edge(step.pipe_from,step.id,'pipe','pipe to '+step.id,() => delete step.pipe_from);
+    if (step.pipe_from) edge(step.pipe_from,step.id,'pipe','pipe to '+step.id,() => {
+      delete step.pipe_from;
+      delete step.pipe_mode;
+    });
     const field = step.type === 'switch' ? 'condition' : 'stdin';
     for (const from of references(step[field])) {
       edge(from,step.id,'template','template link to '+step.id,() => { step[field] = stripReference(step[field],from); });
@@ -547,7 +551,10 @@ function removeStep(step) {
   if (!editAllowed() || !confirm('Delete ' + step.id + ' and its connections?')) return;
   state.workflow.steps = state.workflow.steps.filter(candidate => candidate !== step);
   for (const other of state.workflow.steps) {
-    if (other.pipe_from === step.id) delete other.pipe_from;
+    if (other.pipe_from === step.id) {
+      delete other.pipe_from;
+      delete other.pipe_mode;
+    }
     for (const key of ['stdin','condition']) if (other[key]) other[key] = stripReference(other[key],step.id);
     if (other.cmd) other.cmd = other.cmd.map(arg => stripReference(arg,step.id));
     for (const [label,target] of Object.entries(other.cases || {})) {
@@ -580,14 +587,21 @@ function renderEditor() {
         value => change('cmd',value)));
       pane.append(textField('Stdin template',step.stdin,value => {
         step.stdin = value || null;
-        if (value && step.pipe_from) { delete step.pipe_from; changed(); }
+        if (value && step.pipe_from) { delete step.pipe_from; delete step.pipe_mode; changed(); }
         else changed(false);
       },true));
       pane.append(textField('Pipe from (step ID)',step.pipe_from,value => {
+        const hadPipe = Boolean(step.pipe_from);
         step.pipe_from = value || null;
+        if (!value) delete step.pipe_mode;
         if (value && step.stdin) { delete step.stdin; changed(); }
-        else changed(false);
+        else changed(hadPipe !== Boolean(value));
       }));
+      if (step.pipe_from) {
+        pane.append(selectField('Pipe mode',[['concurrent','Concurrent'],['atomic','Atomic']],
+          step.pipe_mode || 'concurrent',value => change('pipe_mode',value)));
+      }
+      pane.append(toggle('Capture stdout',step.capture_stdout !== false,value => change('capture_stdout',value)));
       pane.append(toggle('Cache result',step.cache,value => change('cache',value)));
       const stringList = value => value === undefined ||
         (Array.isArray(value) && value.every(item => typeof item === 'string'));

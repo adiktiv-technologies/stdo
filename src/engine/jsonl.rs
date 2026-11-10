@@ -19,28 +19,40 @@ pub(super) struct Collector<'a> {
     pending: Buffer,
     read: usize,
     line: usize,
+    capture: bool,
 }
 
 impl<'a> Collector<'a> {
-    pub(super) fn new(budget: &'a Budget, step: &'a str) -> Self {
+    pub(super) fn new(budget: &'a Budget, step: &'a str, capture: bool) -> Self {
         Self {
             budget,
             step,
             pending: budget.buffer(),
             read: 0,
             line: 1,
+            capture,
         }
     }
 
     pub(super) fn push(&mut self, bytes: &[u8], output: &mut Buffer) -> Result<(), Error> {
-        self.read += bytes.len();
-        if self.read > MAX_STEP_OUTPUT_BYTES {
-            return Err(Error::MemoryLimitExceeded {
-                step: self.step.to_owned(),
-                limit_bytes: MAX_STEP_OUTPUT_BYTES,
-            });
+        if self.capture {
+            self.read += bytes.len();
+            if self.read > MAX_STEP_OUTPUT_BYTES {
+                return Err(Error::MemoryLimitExceeded {
+                    step: self.step.to_owned(),
+                    limit_bytes: MAX_STEP_OUTPUT_BYTES,
+                });
+            }
         }
         for part in bytes.split_inclusive(|&byte| byte == b'\n') {
+            let line_len =
+                self.pending.bytes().len() + part.strip_suffix(b"\n").unwrap_or(part).len();
+            if !self.capture && line_len > super::pipe::CHUNK_SIZE {
+                return Err(Error::MemoryLimitExceeded {
+                    step: self.step.to_owned(),
+                    limit_bytes: super::pipe::CHUNK_SIZE,
+                });
+            }
             if let Some(line) = part.strip_suffix(b"\n") {
                 if self.pending.bytes().is_empty() {
                     normalize(self.step, self.line, line, output)?;
@@ -235,7 +247,7 @@ mod tests {
     fn preserves_quoted_whitespace_and_normalizes_records_across_reads() {
         let budget = Budget::default();
         let mut output = budget.buffer();
-        let mut collector = Collector::new(&budget, "sample");
+        let mut collector = Collector::new(&budget, "sample", true);
         for chunk in [
             b"  { \"reading\" : \"escaped \\".as_slice(),
             b"\"value  \" }\r",

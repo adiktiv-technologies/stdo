@@ -17,7 +17,7 @@ use tokio::{sync::watch, task::JoinSet};
 use crate::{
     dag::{
         graph::Graph,
-        schema::{CommandStep, Input, InputKind, StdoutFormat, StepKind, Workflow},
+        schema::{CommandStep, Input, InputKind, PipeMode, StdoutFormat, StepKind, Workflow},
     },
     error::Error,
 };
@@ -309,6 +309,7 @@ async fn run_workflow(
             }
             let retry = command.retry;
             let retries = command.retries();
+            let capture_stdout = command.capture_stdout;
             let replay = if retries {
                 input.as_ref().map(pipe::Input::replay)
             } else {
@@ -345,19 +346,26 @@ async fn run_workflow(
             tasks.spawn(async move {
                 let mut attempt = 1;
                 let value = loop {
+                    let group = running.group();
                     let result = match running
                         .finish(
                             budget.clone(),
                             receiver.clone(),
                             timing.as_mut(),
                             format == Some(StdoutFormat::Jsonl),
+                            capture_stdout,
                             &mut outgoing,
                         )
                         .await
                     {
                         Ok(None) => return Ok(None),
                         Ok(Some(captured)) => {
-                            StepOutput::new(captured, format.as_ref(), &id, false)
+                            let buffered_format = format.as_ref().filter(|_| capture_stdout);
+                            let value = StepOutput::new(captured, buffered_format, &id, false);
+                            if value.is_err() {
+                                runner::kill_group(group).await;
+                            }
+                            value
                         }
                         Err(error) => Err(error),
                     };
@@ -468,6 +476,13 @@ fn command_input(
             .ok_or_else(|| {
                 Error::InvalidWorkflow(format!("step {step:?} has no pipe output from {source:?}"))
             })?;
+        if command.pipe_mode == PipeMode::Atomic && !upstream.captured.status.success() {
+            return Err(Error::AtomicPipe {
+                step: step.to_owned(),
+                producer: source.clone(),
+                status: upstream.captured.status,
+            });
+        }
         return Ok(Some(upstream.captured.stdout.clone()));
     }
     command

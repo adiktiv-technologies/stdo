@@ -93,6 +93,10 @@ pub struct CommandStep {
     pub cmd: Vec<String>,
     pub stdin: Option<String>,
     pub pipe_from: Option<String>,
+    #[serde(default, skip_serializing_if = "PipeMode::is_concurrent")]
+    pub pipe_mode: PipeMode,
+    #[serde(default = "capture_by_default", skip_serializing_if = "is_captured")]
+    pub capture_stdout: bool,
     #[serde(default)]
     pub ignore_exit_code: bool,
     #[serde(default)]
@@ -106,6 +110,29 @@ pub struct CommandStep {
     pub cache_files: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cache_env: Vec<String>,
+}
+
+fn capture_by_default() -> bool {
+    true
+}
+
+fn is_captured(capture: &bool) -> bool {
+    *capture
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum PipeMode {
+    #[default]
+    Concurrent,
+    Atomic,
+}
+
+impl PipeMode {
+    fn is_concurrent(&self) -> bool {
+        *self == Self::Concurrent
+    }
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize)]
@@ -123,6 +150,14 @@ impl CommandStep {
 
     pub(crate) fn validate_options(&self, location: &str) -> Result<(), Error> {
         let invalid = |message| Error::InvalidWorkflow(format!("{location}: {message}"));
+        if self.pipe_mode == PipeMode::Atomic && self.pipe_from.is_none() {
+            return Err(invalid("pipe_mode: atomic requires pipe_from"));
+        }
+        if !self.capture_stdout && (self.cache || self.parse_stdout == Some(StdoutFormat::Json)) {
+            return Err(invalid(
+                "capture_stdout: false cannot use cache or parse_stdout: json",
+            ));
+        }
         if self.timeout_ms == Some(0) {
             return Err(invalid("timeout_ms must be greater than 0"));
         }
