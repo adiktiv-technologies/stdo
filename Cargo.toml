@@ -9,6 +9,7 @@ homepage = "https://adiktiv-technologies.github.io/stdo"
 readme = "README.md"
 keywords = ["workflow", "dag", "orchestrator", "cli", "unix"]
 categories = ["command-line-utilities", "development-tools"]
+exclude = ["AGENTS.md", ".github/", ".claude/", "release-plz.toml"]
 
 [profile.release]
 opt-level = "z"

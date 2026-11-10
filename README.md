@@ -15,6 +15,9 @@ A single ~3 MiB zero-network Rust binary that orchestrates your local CLI tools 
 
 </div>
 
+> [!WARNING]
+> **Pre-Alpha (Work in Progress).** The published `v0.0.1` on crates.io is a crate reservation and CLI skeleton. The Phase 1 topological DAG engine (`v0.1.0`) is under active development.
+
 ## Why `stdo`?
 
 Modern AI, data, and automation orchestrators (like Dify, Airflow, or Langflow) suffer from severe infrastructure bloat: they demand multi-container Docker stacks, PostgreSQL, Redis, and lock your logic into fragile Python SDKs that break every month.
@@ -49,10 +52,10 @@ Before running a single command, `stdo` topologically sorts your DAG, validates 
 
 ```bash
 # Via Cargo (Rust 1.75+)
-cargo install stdo
+cargo install stdo # Pre-alpha CLI skeleton (v0.0.1)
 
-# Or via pre-compiled static binary (Linux / macOS — x86_64 & aarch64)
-curl -fsSL [https://adiktiv-technologies.github.io/stdo/install.sh](https://adiktiv-technologies.github.io/stdo/install.sh) | sh
+# Static binaries coming in v0.1.0
+# curl -fsSL https://adiktiv-technologies.github.io/stdo/install.sh | sh
 ```
 
 ### 2. Define your workflow (`stdo.yaml`)

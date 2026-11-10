@@ -1,0 +1,66 @@
+name: Release-plz
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  # The default token suppresses the required PR checks and tag-triggered builds.
+  GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: MarcoIeni/release-plz-action@v0.5
+        with:
+          command: release
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  release-pr:
+    needs: release
+    runs-on: ubuntu-latest
+    concurrency:
+      group: release-plz-pr-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: main
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Apply the milestone version rule
+        id: version-policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          config="$PWD/release-plz.toml"
+          last_release="$(git describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*' HEAD 2>/dev/null || true)"
+          range=HEAD
+          if [[ -n "$last_release" ]]; then
+            range="$last_release..HEAD"
+          fi
+
+          # release-plz treats breaking changes in 0.0.x as patch bumps.
+          # Enable minor feature bumps only when an unreleased milestone is present.
+          milestone="$(git log -1 --format=%s --extended-regexp --grep='^feat(\([^()]+\))?!: ' "$range")"
+          if [[ -n "$milestone" ]]; then
+            config="$RUNNER_TEMP/stdo-release-plz.toml"
+            sed 's/^features_always_increment_minor = false$/features_always_increment_minor = true/' release-plz.toml > "$config"
+          fi
+          echo "config=$config" >> "$GITHUB_OUTPUT"
+      - uses: MarcoIeni/release-plz-action@v0.5
+        with:
+          command: release-pr
+          config: ${{ steps.version-policy.outputs.config }}
