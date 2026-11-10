@@ -194,6 +194,10 @@ stdo run -t -f examples/01-parallel-repo-audit.yaml
 
 See the [workflow gallery](examples/README.md) for the ETL and release gate examples.
 
+- Turn a Gemma 4 answer into a WAV file with [Ollama and Phonon](examples/07-ollama-gemma4-phonon-speech.yaml).
+- Route a Rust source triage report from a [local Ollama model](examples/08-ollama-local-pr-triage.yaml).
+- Fetch a REST endpoint with retries and write validated JSONL through an [atomic pipe](examples/09-generic-http-api-pipeline.yaml).
+
 ### Stream local speech with Ollama and Phonon
 
 Gradium’s Phonon family streams speech as it generates it. Ollama’s `phonon:latest` uses the 31M English checkpoint and selects the `default` voice when you omit `--voice`. These commands use the Phonon package for Apple Silicon and Ollama 0.40.9 or later. [Gradium models](https://huggingface.co/gradium) · [Phonon 31M English](https://huggingface.co/gradium/phonon-31m-en) · [Ollama speech guide](https://docs.ollama.com/capabilities/speech)

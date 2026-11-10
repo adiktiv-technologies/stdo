@@ -1,6 +1,6 @@
-# Phase 1 workflow gallery
+# Workflow gallery
 
-Run these commands from the repository root with the Phase 1 `stdo` binary on your PATH. The examples use POSIX tools and local inputs.
+Run these commands from the repository root with `stdo` v0.5.0 or later on your PATH. Examples 01 through 06 use POSIX tools and local inputs. Examples 07 through 09 list their extra prerequisites below.
 
 Workflows 01, 04, and 05 also resolve their paths when run from inside `examples/`. Add `--telemetry` (`-t`) to write execution timings and peak monitored buffer usage to stderr.
 
@@ -65,4 +65,33 @@ A command emits JSON Lines sensor readings. The next step filters and renames fi
 ```sh
 stdo doctor -f examples/06-jsonl-sensor-stream.yaml
 stdo run -f examples/06-jsonl-sensor-stream.yaml
+```
+
+## 07 · Gemma 4 to Phonon speech
+
+With Ollama running and both models available locally, Gemma 4 answers the prompt and Phonon streams WAV bytes directly to the file writer. The default output is `/tmp/stdo-owl-fact.wav`. Use `-i` to change `llm_model`, `tts_model`, `prompt`, or `output_wav`. [Ollama speech requirements](https://docs.ollama.com/capabilities/speech)
+
+Gemma's two-attempt retry buffers its text before Phonon starts. For live text streaming into Phonon, remove the retry or set `attempts: 1`. The WAV leg streams in either case. If speech generation fails mid-stream, the destination may contain a partial file.
+
+```sh
+stdo doctor -f examples/07-ollama-gemma4-phonon-speech.yaml
+stdo run -f examples/07-ollama-gemma4-phonon-speech.yaml -i output_wav=./owl-fact.wav
+```
+
+## 08 · Local PR triage with Ollama
+
+Two Rust source scans feed a prompt to the local Gemma 4 model. The JSON response routes to `flag_review` or `approve_pr` and prints an advisory verdict. The cache key includes the scan evidence, rendered model argument, and `OLLAMA_HOST`. Use `--no-cache` after updating the weights behind the same model tag.
+
+```sh
+stdo doctor -f examples/08-ollama-local-pr-triage.yaml
+stdo run -f examples/08-ollama-local-pr-triage.yaml -i target_dir=src
+```
+
+## 09 · Resilient HTTP API to JSONL
+
+Install `curl` and `jq`. The default URL fetches recent `stdo` releases from GitHub. Set `api_url` to use any endpoint that returns a JSON array or an object with an `items` array. The workflow retains objects whose numeric `id` is at least `min_id` and validates the normalized JSONL. The atomic pipe starts the file writer only after normalization succeeds and the switch finds records. Empty and invalid responses leave the existing destination untouched. The default destination is `/tmp/stdo-api-records.jsonl`.
+
+```sh
+stdo doctor -f examples/09-generic-http-api-pipeline.yaml
+stdo run -f examples/09-generic-http-api-pipeline.yaml -i output_jsonl=./releases.jsonl
 ```

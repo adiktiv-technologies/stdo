@@ -1,0 +1,49 @@
+version: "1.0"
+name: generic-http-api-pipeline
+description: Fetch a JSON array or items envelope with curl, validate JSONL, and write the filtered records.
+
+inputs:
+  api_url: { type: string, default: "https://api.github.com/repos/adiktiv-technologies/stdo/releases?per_page=3" }
+  min_id: { type: number, default: 1 }
+  output_jsonl: { type: path, default: /tmp/stdo-api-records.jsonl }
+
+steps:
+  - id: fetch_api
+    cmd: [curl, -fsSL, -H, "Accept: application/json", --, "{{ inputs.api_url }}"]
+    timeout_ms: 10000
+    retry: { attempts: 3, backoff_ms: 300 }
+
+  - id: normalize_jsonl
+    cmd:
+      - jq
+      - -cs
+      - --argjson
+      - min_id
+      - "{{ inputs.min_id }}"
+      - |
+        if ($min_id | floor) != $min_id then error("min_id must be an integer") else . end
+        | if length != 1 then error("expected one JSON response") else .[0] end
+        | if type == "object" then .items else . end
+        | if type != "array" then error("expected an array or an items array") else .[] end
+        | select(type == "object")
+        | select((.id | type) == "number" and .id >= $min_id)
+    pipe_from: fetch_api
+    parse_stdout: jsonl
+
+  - id: has_records
+    type: switch
+    condition: "{{ (steps.normalize_jsonl.json | length) > 0 }}"
+    cases:
+      "true": atomic_commit
+      "false": empty_response
+
+  - id: atomic_commit
+    cmd: [sh, -c, 'cat > "$1"', write-jsonl, "{{ inputs.output_jsonl }}"]
+    pipe_from: normalize_jsonl
+    pipe_mode: atomic
+
+  - id: empty_response
+    cmd: [echo, "No matching records"]
+
+output: |
+  {% set count = steps.normalize_jsonl.json | length %}{% if count %}Wrote {{ count }} JSONL record(s) to {{ inputs.output_jsonl }}{% else %}{{ steps.empty_response.stdout | trim }}{% endif %}

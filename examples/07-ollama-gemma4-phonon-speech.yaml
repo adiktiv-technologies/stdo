@@ -1,0 +1,27 @@
+version: "1.0"
+name: ollama-gemma4-phonon-speech
+description: Generate a short answer with Ollama and stream Phonon's WAV output to disk.
+
+inputs:
+  llm_model: { type: string, default: gemma4 }
+  tts_model: { type: string, default: phonon }
+  prompt: { type: string, default: "Tell me a fun fact about owls in two sentences." }
+  output_wav: { type: path, default: /tmp/stdo-owl-fact.wav }
+
+steps:
+  - id: ask_gemma
+    cmd: [ollama, run, "{{ inputs.llm_model }}", --hidethinking, "{{ inputs.prompt }}"]
+    timeout_ms: 60000
+    retry: { attempts: 2, backoff_ms: 500 }
+
+  - id: stream_phonon
+    cmd: [ollama, run, "{{ inputs.tts_model }}"]
+    pipe_from: ask_gemma
+    capture_stdout: false
+
+  - id: write_wav
+    cmd: [sh, -c, 'cat > "$1" && wc -c < "$1"', write-wav, "{{ inputs.output_wav }}"]
+    pipe_from: stream_phonon
+
+output: |
+  Wrote {{ steps.write_wav.stdout | trim }} bytes to {{ inputs.output_wav }}

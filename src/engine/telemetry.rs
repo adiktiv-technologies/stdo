@@ -418,6 +418,7 @@ impl Drop for StepTimer {
             record.duration = self.started.elapsed();
         }
         if let Some(events) = &self.telemetry.events {
+            events.finish_stdout(&record.id);
             events.emit(EngineEvent::StepFinished {
                 telemetry: record.snapshot(self.key.0, self.telemetry.hash_stdout),
             });

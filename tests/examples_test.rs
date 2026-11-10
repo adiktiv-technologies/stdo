@@ -1,4 +1,9 @@
-use std::{fs, path::Path, process::Command};
+use std::{
+    env, fs,
+    os::unix::fs::PermissionsExt,
+    path::{Path, PathBuf},
+    process::{Command, Output},
+};
 
 const AUDIT: &str = "examples/01-parallel-repo-audit.yaml";
 const ETL: &str = "examples/02-monitored-pipe-etl.yaml";
@@ -6,7 +11,20 @@ const GATE: &str = "examples/03-release-gate-switch.yaml";
 const ARCHITECTURE: &str = "examples/04-stdo-zero-network-guard.yaml";
 const READINESS: &str = "examples/05-stdo-release-readiness.yaml";
 const SENSOR: &str = "examples/06-jsonl-sensor-stream.yaml";
-const GALLERY: [&str; 6] = [AUDIT, ETL, GATE, ARCHITECTURE, READINESS, SENSOR];
+const SPEECH: &str = "examples/07-ollama-gemma4-phonon-speech.yaml";
+const TRIAGE: &str = "examples/08-ollama-local-pr-triage.yaml";
+const HTTP: &str = "examples/09-generic-http-api-pipeline.yaml";
+const GALLERY: [&str; 9] = [
+    AUDIT,
+    ETL,
+    GATE,
+    ARCHITECTURE,
+    READINESS,
+    SENSOR,
+    SPEECH,
+    TRIAGE,
+    HTTP,
+];
 
 fn root() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -132,7 +150,7 @@ fn release_readiness_renders_markdown_and_valid_json() {
     let card = invoke("run", READINESS, &[]);
     assert!(card.contains("# stdo release readiness\n"));
     assert!(card.contains(&format!("Crate version: `{}`", env!("CARGO_PKG_VERSION"))));
-    assert!(card.contains("Documented workflows: 6/6\n"));
+    assert!(card.contains(&format!("Documented workflows: {0}/{0}\n", GALLERY.len())));
     assert!(card.contains("Status: READY\n"));
     let (_, fenced) = card.split_once("```json\n").unwrap();
     let (json, _) = fenced.split_once("\n```").unwrap();
@@ -159,6 +177,188 @@ fn release_readiness_renders_markdown_and_valid_json() {
             "ready": true
         })
     );
+}
+
+struct StubWorkspace(PathBuf);
+
+impl Drop for StubWorkspace {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+impl StubWorkspace {
+    fn stub(&self, name: &str, script: &str) {
+        let path = self.0.join("bin").join(name);
+        fs::write(&path, format!("#!/bin/sh\nset -eu\n{script}")).unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+
+    fn invoke(&self, subcommand: &str, file: &str, args: &[&str]) -> Output {
+        let path = env::join_paths(
+            std::iter::once(self.0.join("bin"))
+                .chain(env::split_paths(&env::var_os("PATH").unwrap())),
+        )
+        .unwrap();
+        Command::new(env!("CARGO_BIN_EXE_stdo"))
+            .current_dir(&self.0)
+            .env("PATH", path)
+            .args([subcommand, "-f"])
+            .arg(root().join(file))
+            .args(args)
+            .output()
+            .unwrap()
+    }
+
+    fn success(&self, subcommand: &str, file: &str, args: &[&str]) -> String {
+        let result = self.invoke(subcommand, file, args);
+        assert!(
+            result.status.success(),
+            "{file}: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        String::from_utf8(result.stdout).unwrap()
+    }
+}
+
+#[test]
+fn external_workflows_run_offline_with_stub_ollama_and_curl() {
+    let workspace =
+        StubWorkspace(env::temp_dir().join(format!("stdo-example-stubs-{}", std::process::id())));
+    fs::create_dir(&workspace.0).unwrap();
+    fs::create_dir(workspace.0.join("bin")).unwrap();
+    fs::create_dir(workspace.0.join("src")).unwrap();
+    workspace.stub(
+        "ollama",
+        r#"
+[ "$1" = run ]
+case "$2" in
+  phonon)
+    [ "$#" -eq 2 ]
+    [ "$(cat)" = 'Owls can turn their heads far.' ]
+    printf 'RIFF\000\377WAVE'
+    ;;
+  gemma4)
+    [ "$3" = --hidethinking ]
+    if [ "$#" -eq 4 ]; then
+      [ "$4" = 'Tell me a fun fact about owls in two sentences.' ]
+      printf 'Owls can turn their heads far.\n'
+    else
+      [ "$#" -eq 3 ]
+      prompt=$(cat)
+      case "$prompt" in *fixture.rs*) ;; *) exit 7 ;; esac
+      printf x >> triage-calls
+      case "$prompt" in
+        *'TODO fixture marker'*) printf '{"risk":"HIGH","summary":"Inspect the fixture"}\n' ;;
+        *) printf '{"risk":"LOW","summary":"No scan findings"}\n' ;;
+      esac
+    fi
+    ;;
+  *) exit 8 ;;
+esac
+"#,
+    );
+    workspace.stub(
+        "curl",
+        r#"
+[ "$#" -eq 5 ] && [ "$1" = -fsSL ] && [ "$2" = -H ] &&
+  [ "$3" = 'Accept: application/json' ] && [ "$4" = -- ] || exit 8
+case "$5" in
+  'https://api.github.com/repos/adiktiv-technologies/stdo/releases?per_page=3')
+    printf '[{"id":1,"tag_name":"v0.5.0"}]\n'
+    ;;
+  https://fixture.invalid/malformed) printf 'not JSON\n' ;;
+  https://fixture.invalid/items)
+    printf x >> curl-calls
+    [ "$(cat curl-calls)" != x ] || exit 22
+    printf '{"items":[{"id":1,"name":"one"},{"id":3,"name":"three"}]}\n'
+    ;;
+  *) exit 9 ;;
+esac
+"#,
+    );
+
+    for file in [SPEECH, TRIAGE, HTTP] {
+        assert!(workspace
+            .success("doctor", file, &[])
+            .contains("required executables available"));
+    }
+
+    assert_eq!(
+        workspace.success("run", SPEECH, &["-i", "output_wav=owl fact.wav"]),
+        "Wrote 10 bytes to owl fact.wav\n"
+    );
+    assert_eq!(
+        fs::read(workspace.0.join("owl fact.wav")).unwrap(),
+        b"RIFF\0\xffWAVE"
+    );
+
+    let source = workspace.0.join("src/fixture.rs");
+    fs::write(&source, "// TODO fixture marker\n").unwrap();
+    for _ in 0..2 {
+        assert_eq!(
+            workspace.success("run", TRIAGE, &[]),
+            "HIGH: Inspect the fixture\nReview requested\n"
+        );
+    }
+    assert_eq!(fs::read(workspace.0.join("triage-calls")).unwrap(), b"x");
+    fs::write(source, "// completed fixture\n").unwrap();
+    assert_eq!(
+        workspace.success("run", TRIAGE, &[]),
+        "LOW: No scan findings\nLow risk\n"
+    );
+
+    workspace.success("run", HTTP, &["-i", "output_jsonl=releases.jsonl"]);
+    assert_eq!(
+        fs::read_to_string(workspace.0.join("releases.jsonl")).unwrap(),
+        "{\"id\":1,\"tag_name\":\"v0.5.0\"}\n"
+    );
+
+    let result = workspace.success(
+        "run",
+        HTTP,
+        &[
+            "-i",
+            "api_url=https://fixture.invalid/items",
+            "-i",
+            "min_id=2",
+            "-i",
+            "output_jsonl=records.jsonl",
+        ],
+    );
+    assert_eq!(result, "Wrote 1 JSONL record(s) to records.jsonl\n");
+    assert_eq!(fs::read(workspace.0.join("curl-calls")).unwrap(), b"xx");
+    let records = workspace.0.join("records.jsonl");
+    let expected = "{\"id\":3,\"name\":\"three\"}\n";
+    assert_eq!(fs::read_to_string(&records).unwrap(), expected);
+    assert_eq!(
+        workspace.success(
+            "run",
+            HTTP,
+            &[
+                "-i",
+                "api_url=https://fixture.invalid/items",
+                "-i",
+                "min_id=10",
+                "-i",
+                "output_jsonl=records.jsonl",
+            ]
+        ),
+        "No matching records\n"
+    );
+    let malformed = workspace.invoke(
+        "run",
+        HTTP,
+        &[
+            "-i",
+            "api_url=https://fixture.invalid/malformed",
+            "-i",
+            "output_jsonl=records.jsonl",
+        ],
+    );
+    assert!(!malformed.status.success());
+    assert!(String::from_utf8_lossy(&malformed.stderr).contains("step \"normalize_jsonl\" failed"));
+    assert_eq!(fs::read_to_string(&records).unwrap(), expected);
 }
 
 #[test]
