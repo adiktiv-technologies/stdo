@@ -224,14 +224,19 @@ fn studio_executes_with_overrides_cache_telemetry_and_failure_pids() {
 #[test]
 fn studio_rejects_cross_origin_requests_and_paths_outside_the_workspace() {
     let studio = Studio::start();
-    let draft = json!({"path":"stdo.yaml","workflow":workflow()});
-    let (status, _) = studio.request(
+    let mut draft = json!({"path":"stdo.yaml","workflow":workflow()});
+    draft["workflow"]["description"] = json!("x".repeat(8192));
+    let (status, response) = studio.request(
         "POST",
         "/api/workflow",
         Some(&draft),
         "Origin: https://example.com\r\n",
     );
     assert_eq!(status, 403);
+    assert_eq!(
+        serde_json::from_str::<Value>(&response).unwrap(),
+        json!({"error": "Cross-origin requests are blocked"})
+    );
     let (status, _) = studio.request("GET", "/", None, "Host: example.com\r\n");
     assert_eq!(status, 400);
     let (status, _) = studio.request("GET", "/api/workflow?path=%2e%2e%2fstdo.yaml", None, "");
