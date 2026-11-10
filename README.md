@@ -16,7 +16,7 @@ A compact, zero-network Rust binary that orchestrates local CLI tools (`curl`, `
 </div>
 
 > [!NOTE]
-> **Phase 2 (`v0.2.0`) adds SHA-256 step caching and an embedded offline Studio.** Use `stdo serve` to edit, validate, save, and run workflows in your browser.
+> **Phases 1 and 2 are complete in `v0.2.0`.** The release includes `stdo doctor`, `stdo run`, `--telemetry`, SHA-256 content-addressable caching in `.stdo/cache/`, and the zero-CDN WYSIWYG Studio in `stdo serve`. Phase 3 (`v0.3.0`) is next, with `stdo bench`, live SSE streaming, and offline audit exports.
 
 ## Why `stdo`?
 
@@ -50,8 +50,17 @@ Before starting subprocesses, `stdo run` sorts and validates the DAG. Use `stdo 
 
 ### 1. Install
 
-```bash
-# From a checkout of this repository
+```sh
+cargo install stdo --locked
+```
+
+Download a prebuilt binary for your platform from [GitHub Releases](https://github.com/adiktiv-technologies/stdo/releases). Linux builds use static musl binaries.
+
+To build from source:
+
+```sh
+git clone https://github.com/adiktiv-technologies/stdo.git
+cd stdo
 cargo install --path . --locked
 ```
 
@@ -155,6 +164,10 @@ See the [workflow gallery](examples/README.md) for the ETL and release gate exam
 
 ## Embedded Studio (`stdo serve`)
 
+Studio is an offline workflow editor for wiring DAG steps, editing YAML, and inspecting runs in your browser.
+
+![stdo Studio showing a LOW-severity release gate with three DAG layers and run telemetry](https://raw.githubusercontent.com/adiktiv-technologies/stdo/main/assets/studio-preview.svg)
+
 ```sh
 stdo serve -f examples/03-release-gate-switch.yaml --port 8080
 ```
@@ -183,7 +196,7 @@ Open [Studio](http://127.0.0.1:8080) in your browser. With no file argument, Stu
 
 ### Phase 3 — Industrial Benchmarking & Streaming (`v0.3.0`)
 
-- [ ] Live Studio output streaming and workflow file reload.
+- [ ] Live Studio output streaming over server-sent events (SSE) and workflow file reload.
 - [ ] `stdo bench`: Built-in A/B/C pipeline comparison harness measuring end-to-end latency, Time-To-First-Byte (TTFB/TTFT), and peak RSS memory per node.
 - [ ] Continuous JSONL line-by-line stream routing for high-frequency sensor and log pipelines.
 - [ ] Exportable offline HTML/JSON execution audit reports for air-gapped compliance.
