@@ -139,7 +139,13 @@ fn release_readiness_renders_markdown_and_valid_json() {
     assert_eq!(json["manifest"]["version"], env!("CARGO_PKG_VERSION"));
     assert_eq!(
         json["manifest"]["exclude"],
-        serde_json::json!(["AGENTS.md", ".github/", ".claude/", "release-plz.toml"])
+        serde_json::json!([
+            "AGENTS.md",
+            ".github/",
+            ".claude/",
+            "release-plz.toml",
+            "assets/"
+        ])
     );
     assert_eq!(
         json["documentation"],

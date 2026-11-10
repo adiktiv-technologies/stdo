@@ -1,0 +1,192 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 620" width="1120" height="620" role="img" aria-labelledby="title description">
+  <title id="title">stdo Studio — release gate workflow</title>
+  <desc id="description">Vector illustration of the offline Studio after a LOW severity run. The assess command feeds a switch, which selects approve_release and skips record_incident. The inspector shows representative timings and the resulting stdout.</desc>
+  <defs>
+    <clipPath id="frame"><rect width="1120" height="620" rx="12"/></clipPath>
+    <style>
+      .control{fill:#1a2538;stroke:#354259}.rule{stroke:#303c51}
+      .card{fill:#192437;stroke:#465775}
+      .terminal{fill:#0b101b;stroke:#303c51}.step-row{fill:#192437;stroke:#303c51}
+      .wire{fill:none;stroke-width:2.5;stroke-linecap:round}
+    </style>
+  </defs>
+
+  <g clip-path="url(#frame)">
+    <rect width="1120" height="620" fill="#0b101b"/>
+    <rect x="0" y="61" width="790" height="559" fill="#111827"/>
+    <path d="M2 122h780 M2 142h780 M2 162h780 M2 182h780 M2 202h780
+             M2 222h780 M2 242h780 M2 262h780 M2 282h780 M2 302h780
+             M2 322h780 M2 342h780 M2 362h780 M2 382h780 M2 402h780
+             M2 422h780 M2 442h780 M2 462h780 M2 482h780 M2 502h780
+             M2 522h780 M2 542h780 M2 562h780 M2 582h780 M2 602h780"
+          fill="none" stroke="#34435d" stroke-width="2" stroke-linecap="round" stroke-dasharray=".01 19.99"/>
+    <rect x="0" y="61" width="790" height="52" fill="#151d2c"/>
+    <rect x="790" y="61" width="330" height="559" fill="#151d2c"/>
+    <path class="rule" d="M0 61H1120 M0 113H1120 M790 61V620"/>
+
+    <g aria-label="Toolbar">
+      <text fill="#e8edf6" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="21" font-weight="650" x="18" y="36">stdo</text>
+      <text fill="#a8b5ca" font-family="system-ui, -apple-system, sans-serif" font-size="13" x="76" y="35">Studio</text>
+      <rect class="control" x="135" y="14" width="245" height="33" rx="6"/>
+      <text fill="#e8edf6" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="12" x="145" y="35">03-release-gate-switch.yaml</text>
+      <path d="m362 28 4 4 4-4" fill="none" stroke="#a8b5ca" stroke-width="1.5"/>
+      <rect class="control" x="390" y="14" width="71" height="33" rx="6"/>
+      <text fill="#e8edf6" font-family="system-ui, -apple-system, sans-serif" font-size="13" x="425.5" y="35" text-anchor="middle">+ Input</text>
+      <rect class="control" x="468" y="14" width="133" height="33" rx="6"/>
+      <text fill="#e8edf6" font-family="system-ui, -apple-system, sans-serif" font-size="13" x="534.5" y="35" text-anchor="middle">+ Command Step</text>
+      <rect class="control" x="608" y="14" width="113" height="33" rx="6"/>
+      <text fill="#e8edf6" font-family="system-ui, -apple-system, sans-serif" font-size="13" x="664.5" y="35" text-anchor="middle">+ Switch Step</text>
+      <rect class="control" x="737" y="14" width="128" height="33" rx="6"/>
+      <text fill="#e8edf6" font-family="system-ui, -apple-system, sans-serif" font-size="13" x="801" y="35" text-anchor="middle">Validate (Doctor)</text>
+      <rect class="control" x="872" y="14" width="84" height="33" rx="6"/>
+      <text fill="#e8edf6" font-family="system-ui, -apple-system, sans-serif" font-size="13" x="914" y="35" text-anchor="middle">Save YAML</text>
+      <rect x="963" y="14" width="140" height="33" rx="6" fill="#427ee8" stroke="#70a6ff"/>
+      <path d="m977 24 0 13 10-6.5z" fill="#fff"/>
+      <text fill="#fff" font-family="system-ui, -apple-system, sans-serif" font-size="13" font-weight="650" x="993" y="35">Run Workflow</text>
+    </g>
+
+    <g aria-label="Canvas controls">
+      <text fill="#e8edf6" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="13" font-weight="650" x="18" y="91">release-gate-switch</text>
+      <path d="M245 86h12" stroke="#73aaff" stroke-width="3"/>
+      <text fill="#a8b5ca" font-family="system-ui, -apple-system, sans-serif" font-size="12" x="262" y="90">Pipe</text>
+      <path d="M303 86h12" stroke="#c1adff" stroke-width="3"/>
+      <text fill="#a8b5ca" font-family="system-ui, -apple-system, sans-serif" font-size="12" x="320" y="90">Template</text>
+      <path d="M384 86h12" stroke="#f4c079" stroke-width="3"/>
+      <text fill="#a8b5ca" font-family="system-ui, -apple-system, sans-serif" font-size="12" x="401" y="90">Branch</text>
+      <text fill="#a8b5ca" font-family="system-ui, -apple-system, sans-serif" font-size="12" x="555" y="90">Wire</text>
+      <rect x="585" y="72" width="91" height="29" rx="5" class="control"/>
+      <text fill="#e8edf6" font-family="system-ui, -apple-system, sans-serif" font-size="12" x="595" y="90">Template</text>
+      <path d="m661 84 4 4 4-4" fill="none" stroke="#a8b5ca" stroke-width="1.4"/>
+      <rect x="686" y="72" width="89" height="29" rx="5" class="control"/>
+      <text fill="#e8edf6" font-family="system-ui, -apple-system, sans-serif" font-size="12" x="730.5" y="90" text-anchor="middle">Auto-layout</text>
+    </g>
+
+    <g aria-label="Topological layers">
+      <g transform="translate(24 141)">
+        <rect width="75" height="24" rx="12" fill="#1c293d" stroke="#405271"/>
+        <text fill="#a8b5ca" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="12" x="37.5" y="16" text-anchor="middle">Layer 1</text>
+      </g>
+      <g transform="translate(285 141)">
+        <rect width="75" height="24" rx="12" fill="#1c293d" stroke="#405271"/>
+        <text fill="#a8b5ca" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="12" x="37.5" y="16" text-anchor="middle">Layer 2</text>
+      </g>
+      <g transform="translate(546 141)">
+        <rect width="75" height="24" rx="12" fill="#1c293d" stroke="#405271"/>
+        <text fill="#a8b5ca" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="12" x="37.5" y="16" text-anchor="middle">Layer 3</text>
+      </g>
+    </g>
+
+    <g aria-label="Workflow connections">
+      <path class="wire" stroke="#c1adff" d="M242 244 C263 244 264 244 285 244"/>
+      <path class="wire" stroke="#f4c079" opacity=".42" d="M503 244 C520 244 529 244 546 244"/>
+      <path class="wire" stroke="#f4c079" d="M503 244 C537 244 512 390 546 390"/>
+      <rect x="475" y="316" width="49" height="20" rx="5" fill="#262333" stroke="#8f7154"/>
+      <text fill="#f4c079" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="11" x="499.5" y="330" text-anchor="middle">false</text>
+    </g>
+
+    <g transform="translate(24 188)" aria-label="assess, 12.43 milliseconds, exit 0">
+      <rect fill="#192437" stroke="#6ee7c8" width="218" height="111" rx="9"/>
+      <path class="rule" d="M0 35H218"/>
+      <path d="m13 13 0 11 8-5.5z" fill="#6ee7c8"/>
+      <text fill="#e8edf6" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="13" font-weight="650" x="29" y="23">assess</text>
+      <rect class="control" x="171" y="8" width="36" height="20" rx="4"/>
+      <text fill="#e8edf6" font-family="system-ui, -apple-system, sans-serif" font-size="11" x="189" y="22" text-anchor="middle">Edit</text>
+      <text fill="#a8b5ca" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="12" x="13" y="59">sh -c …  ·  JSON stdout</text>
+      <rect x="12" y="74" width="148" height="24" rx="5" fill="#153b35"/>
+      <text fill="#6ee7c8" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="12" x="22" y="90">12.43 ms · exit 0</text>
+      <circle cx="0" cy="56" r="5" fill="#6ee7c8" stroke="#111827" stroke-width="2"/>
+      <circle cx="218" cy="56" r="5" fill="#c1adff" stroke="#111827" stroke-width="2"/>
+    </g>
+
+    <g transform="translate(285 188)" aria-label="gate, 0.07 milliseconds, switch to approve_release">
+      <rect fill="#192437" stroke="#6ee7c8" width="218" height="111" rx="9"/>
+      <path class="rule" d="M0 35H218"/>
+      <path d="m17 12 6 6-6 6-6-6z" fill="none" stroke="#f4c079" stroke-width="1.5"/>
+      <text fill="#e8edf6" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="13" font-weight="650" x="29" y="23">gate</text>
+      <rect class="control" x="171" y="8" width="36" height="20" rx="4"/>
+      <text fill="#e8edf6" font-family="system-ui, -apple-system, sans-serif" font-size="11" x="189" y="22" text-anchor="middle">Edit</text>
+      <text fill="#a8b5ca" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="12" x="13" y="59">steps.assess.json…</text>
+      <rect x="12" y="69" width="194" height="32" rx="5" fill="#352d2b"/>
+      <text fill="#f4c079" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="11" x="20" y="82">0.07 ms · switch</text>
+      <text fill="#f4c079" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="11" x="20" y="95">→ approve_release</text>
+      <circle cx="0" cy="56" r="5" fill="#c1adff" stroke="#111827" stroke-width="2"/>
+      <circle cx="218" cy="56" r="5" fill="#f4c079" stroke="#111827" stroke-width="2"/>
+    </g>
+
+    <g transform="translate(546 188)" opacity=".60" aria-label="record_incident, skipped">
+      <rect class="card" width="218" height="111" rx="9"/>
+      <path class="rule" d="M0 35H218"/>
+      <path d="m13 13 0 11 8-5.5z" fill="#a8b5ca"/>
+      <text fill="#e8edf6" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="13" font-weight="650" x="29" y="23">record_incident</text>
+      <rect class="control" x="171" y="8" width="36" height="20" rx="4"/>
+      <text fill="#e8edf6" font-family="system-ui, -apple-system, sans-serif" font-size="11" x="189" y="22" text-anchor="middle">Edit</text>
+      <text fill="#a8b5ca" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="12" x="13" y="59">echo BLOCK: incident…</text>
+      <rect x="12" y="74" width="155" height="24" rx="5" fill="#29354a"/>
+      <text fill="#a8b5ca" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="12" x="22" y="90">0.00 ms · skipped</text>
+      <circle cx="0" cy="56" r="5" fill="#f4c079" stroke="#111827" stroke-width="2"/>
+      <circle cx="218" cy="56" r="5" fill="#a8b5ca" stroke="#111827" stroke-width="2"/>
+    </g>
+
+    <g transform="translate(546 334)" aria-label="approve_release, 3.25 milliseconds, exit 0">
+      <rect fill="#192437" stroke="#6ee7c8" width="218" height="111" rx="9"/>
+      <path class="rule" d="M0 35H218"/>
+      <path d="m13 13 0 11 8-5.5z" fill="#6ee7c8"/>
+      <text fill="#e8edf6" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="13" font-weight="650" x="29" y="23">approve_release</text>
+      <rect class="control" x="171" y="8" width="36" height="20" rx="4"/>
+      <text fill="#e8edf6" font-family="system-ui, -apple-system, sans-serif" font-size="11" x="189" y="22" text-anchor="middle">Edit</text>
+      <text fill="#a8b5ca" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="12" x="13" y="59">echo PASS: release…</text>
+      <rect x="12" y="74" width="143" height="24" rx="5" fill="#153b35"/>
+      <text fill="#6ee7c8" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="12" x="22" y="90">3.25 ms · exit 0</text>
+      <circle cx="0" cy="56" r="5" fill="#f4c079" stroke="#111827" stroke-width="2"/>
+      <circle cx="218" cy="56" r="5" fill="#6ee7c8" stroke="#111827" stroke-width="2"/>
+    </g>
+
+    <g aria-label="Run inspector">
+      <text fill="#a8b5ca" font-family="system-ui, -apple-system, sans-serif" font-size="13" x="834" y="92" text-anchor="middle">Edit</text>
+      <text fill="#a8b5ca" font-family="system-ui, -apple-system, sans-serif" font-size="13" x="899" y="92" text-anchor="middle">YAML</text>
+      <rect x="941" y="73" width="160" height="30" rx="6" fill="#29354a" stroke="#546485"/>
+      <text fill="#e8edf6" font-family="system-ui, -apple-system, sans-serif" font-size="13" font-weight="650" x="1021" y="92" text-anchor="middle">Run inspector</text>
+      <text fill="#e8edf6" font-family="system-ui, -apple-system, sans-serif" font-size="15" font-weight="650" x="808" y="141">Run workflow</text>
+      <text fill="#a8b5ca" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="12" x="808" y="165">severity</text>
+      <rect class="control" x="808" y="173" width="294" height="31" rx="5"/>
+      <text fill="#e8edf6" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="12" x="819" y="193">LOW</text>
+      <rect x="809" y="217" width="12" height="12" rx="2" class="control"/>
+      <text fill="#a8b5ca" font-family="system-ui, -apple-system, sans-serif" font-size="12" x="828" y="228">Bypass step cache</text>
+      <rect x="808" y="244" width="294" height="31" rx="5" fill="#15352f" stroke="#315849"/>
+      <circle cx="820" cy="259.5" r="3.5" fill="#6ee7c8"/>
+      <text fill="#6ee7c8" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="10.5" x="831" y="263.5">completed · 16.33 ms · 131,136 peak bytes</text>
+      <text fill="#e8edf6" font-family="system-ui, -apple-system, sans-serif" font-size="13" font-weight="650" x="808" y="298">Stdout</text>
+      <rect class="terminal" x="808" y="307" width="294" height="55" rx="6"/>
+      <text fill="#e8edf6" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="12" x="819" y="328">Severity: LOW</text>
+      <text fill="#6ee7c8" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="12" x="819" y="347">PASS: release approved</text>
+      <text fill="#e8edf6" font-family="system-ui, -apple-system, sans-serif" font-size="13" font-weight="650" x="808" y="386">Step telemetry</text>
+      <g transform="translate(808 398)">
+        <rect class="step-row" width="294" height="40" rx="5"/>
+        <text fill="#e8edf6" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="12" x="10" y="16">assess</text>
+        <text fill="#6ee7c8" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="11" x="284" y="16" text-anchor="end">12.43 ms · exit 0</text>
+        <text fill="#90a1bc" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="11" x="10" y="32">41 B out / 0 B err</text>
+      </g>
+      <g transform="translate(808 444)">
+        <rect class="step-row" width="294" height="40" rx="5"/>
+        <text fill="#e8edf6" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="12" x="10" y="16">gate</text>
+        <text fill="#f4c079" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="11" x="284" y="16" text-anchor="end">0.07 ms · switch</text>
+        <text fill="#90a1bc" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="11" x="10" y="32">→ approve_release</text>
+      </g>
+      <g transform="translate(808 490)">
+        <rect class="step-row" width="294" height="40" rx="5"/>
+        <text fill="#a8b5ca" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="12" x="10" y="16">record_incident</text>
+        <text fill="#a8b5ca" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="11" x="284" y="16" text-anchor="end">0.00 ms · skipped</text>
+        <text fill="#90a1bc" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="11" x="10" y="32">0 B out / 0 B err</text>
+      </g>
+      <g transform="translate(808 536)">
+        <rect class="step-row" width="294" height="40" rx="5"/>
+        <text fill="#e8edf6" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="12" x="10" y="16">approve_release</text>
+        <text fill="#6ee7c8" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="11" x="284" y="16" text-anchor="end">3.25 ms · exit 0</text>
+        <text fill="#90a1bc" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="11" x="10" y="32">23 B out / 0 B err</text>
+      </g>
+      <path class="rule" d="M790 587H1120"/>
+      <text fill="#6ee7c8" font-family="system-ui, -apple-system, sans-serif" font-size="12" x="808" y="607">Workflow completed</text>
+    </g>
+  </g>
+  <rect x=".5" y=".5" width="1119" height="619" rx="12" fill="none" stroke="#354259"/>
+</svg>
