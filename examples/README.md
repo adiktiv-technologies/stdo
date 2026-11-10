@@ -2,6 +2,13 @@
 
 Run these commands from the repository root with the Phase 1 `stdo` binary on your PATH. The examples use POSIX tools and local inputs.
 
+Workflows 01, 04, and 05 also resolve their paths when run from inside `examples/`. Add `--telemetry` (`-t`) to write execution timings and peak monitored buffer usage to stderr.
+
+```sh
+cd examples
+stdo run -t ./01-parallel-repo-audit.yaml
+```
+
 ## 01 · Parallel repository audit
 
 Three independent scans count YAML files, lines, and lines matching a literal keyword in `target_dir`. A MiniJinja stdin template combines the results. The grep step accepts exit code 1 so a keyword with no matches yields a count of zero.

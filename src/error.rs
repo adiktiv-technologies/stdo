@@ -1,4 +1,4 @@
-use std::{io, path::PathBuf};
+use std::{fmt, io, path::PathBuf};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -30,10 +30,11 @@ pub enum Error {
     MemoryLimitExceeded { step: String, limit_bytes: usize },
     #[error("process I/O failed for step {step:?}: {source}")]
     Process { step: String, source: io::Error },
-    #[error("step {step:?} failed with {status}")]
-    Exit {
+    #[error("step {step:?} failed with {status}{}", Diagnostic(.stderr))]
+    StepFailed {
         step: String,
         status: std::process::ExitStatus,
+        stderr: String,
     },
     #[error("step {step:?} produced invalid JSON: {source}")]
     Json {
@@ -42,4 +43,16 @@ pub enum Error {
     },
     #[error("could not write workflow output: {0}")]
     WriteOutput(io::Error),
+}
+
+struct Diagnostic<'a>(&'a str);
+
+impl fmt::Display for Diagnostic<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.0.is_empty() {
+            Ok(())
+        } else {
+            write!(formatter, "\n{}", self.0)
+        }
+    }
 }

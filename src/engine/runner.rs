@@ -2,6 +2,7 @@ use std::{
     io::{self, Write},
     process::{ExitStatus, Stdio},
     sync::Arc,
+    time::Duration,
 };
 
 use tokio::{
@@ -15,11 +16,13 @@ use crate::error::Error;
 use super::{
     budget::{Budget, Buffer},
     ledger::ProcessLedger,
+    telemetry::{Status, StepTimer},
 };
 
 pub use super::budget::{MAX_STEP_OUTPUT_BYTES, MAX_WORKFLOW_MEMORY_BYTES};
 
 const CHUNK_SIZE: usize = 64 * 1024;
+const FAILURE_DRAIN_TIMEOUT: Duration = Duration::from_millis(100);
 
 pub(super) struct Captured {
     pub(super) stdout: Arc<Buffer>,
@@ -67,11 +70,15 @@ impl Running {
         mut self,
         budget: Budget,
         mut cancel: watch::Receiver<bool>,
+        mut timing: Option<StepTimer>,
     ) -> Result<Option<Captured>, Error> {
         let mut stdout = self.child.stdout.take().expect("stdout is piped");
         let mut stderr = self.child.stderr.take().expect("stderr is piped");
         let mut stdin = self.child.stdin.take().expect("stdin is piped");
         let step = &self.step;
+        let mut stdout_buffer = budget.buffer();
+        let mut stderr_buffer = budget.buffer();
+        let mut observed_status = None;
         let write_input = async move {
             if let Some(input) = self.input {
                 match stdin.write_all(input.bytes()).await {
@@ -83,35 +90,48 @@ impl Running {
             }
             Ok(())
         };
-        let wait = async {
-            let status = self
-                .child
-                .wait()
-                .await
-                .map_err(|source| process_error(step, source))?;
-            self.ledger.finished(self.entry, status, false);
-            if !status.success() && !self.ignore_exit_code {
-                return Err(Error::Exit {
-                    step: step.to_owned(),
-                    status,
-                });
-            }
-            Ok(status)
-        };
         let result = tokio::select! {
             biased;
             _ = cancel.wait_for(|cancelled| *cancelled) => Ok(None),
             result = async {
-                let (stdout, stderr, (), status) = tokio::try_join!(
-                    read_pipe(&mut stdout, &budget, step),
-                    read_pipe(&mut stderr, &budget, step),
-                    write_input,
-                    wait,
-                )?;
-                Ok(Some(Captured { stdout: Arc::new(stdout), stderr, status }))
+                let drain = async {
+                    tokio::try_join!(
+                        read_pipe(&mut stdout, &budget, step, &mut stdout_buffer),
+                        read_pipe(&mut stderr, &budget, step, &mut stderr_buffer),
+                        write_input,
+                    )?;
+                    Ok::<_, Error>(())
+                };
+                let wait = async {
+                    let status = self.child.wait().await.map_err(|source| process_error(step, source))?;
+                    self.ledger.finished(self.entry, status, false);
+                    observed_status = Some(status);
+                    Ok::<_, Error>(status)
+                };
+                tokio::pin!(drain, wait);
+                let status = tokio::select! {
+                    status = &mut wait => {
+                        let status = status?;
+                        if !status.success() && !self.ignore_exit_code {
+                            // Descendants can inherit the pipes. Bound the diagnostic drain
+                            // so a failed command still cancels parallel peers promptly.
+                            if let Ok(result) = tokio::time::timeout(FAILURE_DRAIN_TIMEOUT, &mut drain).await {
+                                result?;
+                            }
+                        } else {
+                            drain.await?;
+                        }
+                        status
+                    }
+                    drained = &mut drain => {
+                        drained?;
+                        wait.await?
+                    }
+                };
+                Ok::<_, Error>(Some(status))
             } => result,
         };
-        if !matches!(result, Ok(Some(_))) {
+        if !matches!(result, Ok(Some(_))) && observed_status.is_none() {
             match self.child.try_wait() {
                 Ok(Some(status)) => self.ledger.finished(self.entry, status, false),
                 _ => {
@@ -122,7 +142,32 @@ impl Running {
                 }
             }
         }
-        result
+        if let Some(timer) = &mut timing {
+            timer.set_bytes(stdout_buffer.bytes().len(), stderr_buffer.bytes().len());
+            if matches!(result, Ok(None)) {
+                timer.set_status(Status::Cancelled);
+            } else if let Some(status) = observed_status {
+                timer.set_status(Status::Exit(status));
+            }
+        }
+
+        let Some(status) = result? else {
+            return Ok(None);
+        };
+        if !status.success() && !self.ignore_exit_code {
+            return Err(Error::StepFailed {
+                step: step.to_owned(),
+                status,
+                stderr: String::from_utf8_lossy(stderr_buffer.bytes())
+                    .trim()
+                    .to_owned(),
+            });
+        }
+        Ok(Some(Captured {
+            stdout: Arc::new(stdout_buffer),
+            stderr: stderr_buffer,
+            status,
+        }))
     }
 }
 
@@ -130,8 +175,8 @@ async fn read_pipe(
     mut reader: impl AsyncRead + Unpin,
     budget: &Budget,
     step: &str,
-) -> Result<Buffer, Error> {
-    let mut output = budget.buffer();
+    output: &mut Buffer,
+) -> Result<(), Error> {
     let mut chunk = budget.buffer();
     chunk.write_all(&[0; CHUNK_SIZE]).map_err(|source| {
         chunk
@@ -144,7 +189,7 @@ async fn read_pipe(
             .await
             .map_err(|source| process_error(step, source))?;
         if count == 0 {
-            return Ok(output);
+            return Ok(());
         }
         output
             .write_all(&chunk.bytes()[..count])

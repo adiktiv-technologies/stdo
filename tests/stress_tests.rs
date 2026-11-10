@@ -224,9 +224,21 @@ steps:
 output: '{{ steps.approved.stdout }}'
 "#,
     );
-    let output = workflow.execute("run", &["-i", "label=ready"]);
+    let output = workflow.execute("run", &["-i", "label=ready", "-t"]);
     assert!(output.status.success(), "{}", stderr(&output));
     assert_eq!(output.stdout, b"ready:2");
+    let report = stderr(&output);
+    assert!(report.contains("switch -> approved"), "{report}");
+    assert_eq!(
+        report
+            .matches("| skipped | stdout_bytes=0 stderr_bytes=0")
+            .count(),
+        2
+    );
+    assert!(
+        report.contains("executed=4 switches=1 skipped=2"),
+        "{report}"
+    );
 }
 
 #[test]
@@ -248,4 +260,92 @@ steps:
     assert!(!output.status.success());
     assert!(report.contains("invalid template"), "{report}");
     assert_process(&report, "seed", "Exited(0)");
+}
+
+#[test]
+fn telemetry_reports_timings_and_bytes_without_changing_stdout() {
+    let workflow = WorkflowFile::new(
+        r#"
+version: '1.0'
+name: telemetry
+steps:
+  - id: emit
+    cmd: [sh, -c, 'printf hello; printf note >&2']
+output: '{{ steps.emit.stdout }}'
+"#,
+    );
+    let default = workflow.execute("run", &[]);
+    assert!(default.status.success());
+    assert!(default.stderr.is_empty());
+
+    let output = workflow.execute("run", &["--telemetry"]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(output.stdout, default.stdout);
+    assert_eq!(output.stdout, b"hello");
+    let report = stderr(&output);
+    assert!(
+        report.contains("Execution Telemetry (completed)"),
+        "{report}"
+    );
+    for prefix in ["  Layer 1: ", "    Step \"emit\": ", "  Total: "] {
+        let line = report
+            .lines()
+            .find_map(|line| line.strip_prefix(prefix))
+            .unwrap();
+        let (duration, _) = line.split_once(" ms").unwrap();
+        let (whole, fraction) = duration.split_once('.').unwrap();
+        assert!(
+            whole.parse::<u64>().is_ok() && fraction.len() == 2 && fraction.parse::<u8>().is_ok()
+        );
+    }
+    assert!(
+        report.contains("exit 0 | stdout_bytes=5 stderr_bytes=4"),
+        "{report}"
+    );
+    assert!(
+        report.contains("executed=1 switches=0 skipped=0"),
+        "{report}"
+    );
+    let (_, usage) = report.split_once("peak_bytes=").unwrap();
+    let (peak, limit) = usage.split_once(" limit_bytes=").unwrap();
+    let peak = peak.parse::<usize>().unwrap();
+    assert!((9..=MAX_WORKFLOW_MEMORY_BYTES).contains(&peak), "{report}");
+    assert_eq!(
+        limit.trim().parse::<usize>().unwrap(),
+        MAX_WORKFLOW_MEMORY_BYTES
+    );
+}
+
+#[test]
+fn failed_step_prints_trimmed_stderr_before_the_pid_ledger() {
+    let workflow = WorkflowFile::new(
+        r#"
+version: '1.0'
+name: telemetry-failure
+steps:
+  - id: fail
+    cmd: [sh, -c, 'printf "  missing manifest\n\n" >&2; exit 2']
+"#,
+    );
+    for args in [&[][..], &["-t"][..]] {
+        let output = workflow.execute("run", args);
+        assert!(!output.status.success());
+        assert!(output.stdout.is_empty());
+        let report = stderr(&output);
+        assert!(
+            report.contains("failed with exit status: 2\nmissing manifest\nSpawned Process Report"),
+            "{report}"
+        );
+        assert_process(&report, "fail", "Exited(2)");
+        if !args.is_empty() {
+            assert!(
+                report.contains("Execution Telemetry (partial; failed)"),
+                "{report}"
+            );
+            assert!(
+                report.contains("exit 2 | stdout_bytes=0 stderr_bytes=20"),
+                "{report}"
+            );
+        }
+    }
 }

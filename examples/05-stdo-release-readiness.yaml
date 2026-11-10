@@ -4,7 +4,12 @@ name: stdo-release-readiness
 steps:
   - id: read_manifest
     cmd:
-      - awk
+      - sh
+      - -c
+      - |
+        if [ ! -f Cargo.toml ] && [ -f ../Cargo.toml ]; then cd .. || exit 2; fi
+        exec awk "$1" Cargo.toml
+      - stdo
       - |
         /^[[:space:]]*\[/ && !collecting {
           in_package = ($0 ~ /^[[:space:]]*\[package\][[:space:]]*$/)
@@ -27,13 +32,13 @@ steps:
           sub(/,[[:space:]]*\]/, "]", excludes)
           printf "{\"version\":\"%s\",\"exclude\":%s}\n", version, excludes
         }
-      - Cargo.toml
     parse_stdout: json
   - id: check_documentation
     cmd:
       - sh
       - -c
       - |
+        if [ ! -f Cargo.toml ] && [ -f ../Cargo.toml ]; then cd .. || exit 2; fi
         [ -r README.md ] && [ -r examples/README.md ] || exit 2
         total=0 documented=0
         for workflow in examples/*.yaml examples/*.yml; do

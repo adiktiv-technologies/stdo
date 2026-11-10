@@ -1,6 +1,7 @@
 mod budget;
 mod ledger;
 pub mod runner;
+mod telemetry;
 pub mod template;
 
 use std::{collections::BTreeMap, io, sync::Arc};
@@ -18,9 +19,11 @@ use crate::{
 };
 
 pub use self::ledger::ProcessLedger;
+pub use self::telemetry::Telemetry;
 use self::{
     budget::{Budget, Buffer},
     runner::{Captured, Running},
+    telemetry::Status,
 };
 
 type Inputs = BTreeMap<String, Value>;
@@ -33,10 +36,23 @@ pub async fn run(
     ledger: &ProcessLedger,
     output: &mut impl io::Write,
 ) -> Result<(), Error> {
+    run_with_telemetry(workflow, overrides, force, ledger, output, None).await
+}
+
+pub async fn run_with_telemetry(
+    workflow: &Workflow,
+    overrides: &[String],
+    force: bool,
+    ledger: &ProcessLedger,
+    output: &mut impl io::Write,
+    telemetry: Option<&Telemetry>,
+) -> Result<(), Error> {
     let graph = Graph::build_with_force(workflow, force)?;
     let inputs = resolve_inputs(workflow, overrides)?;
     let argv_context = context! { inputs => &inputs };
-    let budget = Budget::default();
+    let budget = telemetry
+        .map(|report| report.budget.clone())
+        .unwrap_or_default();
     let mut outputs = Outputs::new();
     let mut skipped = vec![false; workflow.steps.len()];
     let indices: BTreeMap<_, _> = workflow
@@ -46,10 +62,12 @@ pub async fn run(
         .map(|(index, step)| (step.id.as_str(), index))
         .collect();
 
-    for layer in &graph.layers {
+    for (layer_number, layer) in (1..).zip(&graph.layers) {
+        let _layer_timing = telemetry.map(|report| report.layer(layer_number));
         let context = context! { inputs => &inputs, steps => &outputs };
         let mut commands = Vec::new();
         for &index in layer {
+            let step = &workflow.steps[index];
             if graph.dependencies[index]
                 .iter()
                 .any(|&source| skipped[source])
@@ -57,11 +75,17 @@ pub async fn run(
                 skipped[index] = true;
             }
             if skipped[index] {
+                if let Some(report) = telemetry {
+                    report
+                        .step(layer_number, index, &step.id)
+                        .set_status(Status::Skipped);
+                }
                 continue;
             }
-            let step = &workflow.steps[index];
             match &step.kind {
                 StepKind::Switch(switch) => {
+                    let mut timing =
+                        telemetry.map(|report| report.step(layer_number, index, &step.id));
                     let result =
                         template::render_bounded(&switch.condition, &context, &budget, &step.id)?;
                     let selected = std::str::from_utf8(result.bytes())
@@ -89,6 +113,9 @@ pub async fn run(
                     {
                         skipped[indices[candidate.as_str()]] = true;
                     }
+                    if let Some(timer) = &mut timing {
+                        timer.set_status(Status::Switch(target.clone()));
+                    }
                 }
                 StepKind::Command(command) => {
                     let argv = command
@@ -107,7 +134,7 @@ pub async fn run(
                         })
                         .collect::<Result<Vec<_>, _>>()?;
                     let input = command_input(command, &context, &outputs, &budget, &step.id)?;
-                    commands.push((step.id.as_str(), command, argv, input));
+                    commands.push((index, step.id.as_str(), command, argv, input));
                 }
             }
         }
@@ -115,7 +142,8 @@ pub async fn run(
         let (cancel, _) = watch::channel(false);
         let mut tasks = JoinSet::new();
         let mut error = None;
-        for (id, command, argv, input) in commands {
+        for (index, id, command, argv, input) in commands {
+            let mut timing = telemetry.map(|report| report.step(layer_number, index, id));
             let running =
                 match Running::spawn(id, argv, input, command.ignore_exit_code, ledger.clone()) {
                     Ok(running) => running,
@@ -125,12 +153,15 @@ pub async fn run(
                         break;
                     }
                 };
+            if let Some(timer) = &mut timing {
+                timer.spawned();
+            }
             let budget = budget.clone();
             let receiver = cancel.subscribe();
             let parse_json = command.parse_stdout.is_some();
             let id = id.to_owned();
             tasks.spawn(async move {
-                let Some(captured) = running.finish(budget, receiver).await? else {
+                let Some(captured) = running.finish(budget, receiver, timing).await? else {
                     return Ok(None);
                 };
                 let json = if parse_json {
