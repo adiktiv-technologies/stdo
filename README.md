@@ -4,7 +4,7 @@
 
 **Standard I/O Orchestrator — Workflow-as-Code meets the Unix Philosophy.**
 
-A single ~3 MiB zero-network Rust binary that orchestrates your local CLI tools (`curl`, `ollama`, `rg`, `jq`, `sqlite3`, `dscr`) over pure `stdin` / `stdout` pipes — complete with an embedded offline Studio UI.
+A compact, zero-network Rust binary that orchestrates local CLI tools (`curl`, `ollama`, `rg`, `jq`, `sqlite3`, `dscr`) over `stdin` and `stdout` pipes.
 
 [![Crates.io](https://img.shields.io/crates/v/stdo.svg)](https://crates.io/crates/stdo)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](https://github.com/adiktiv-technologies/stdo/blob/main/LICENSE)
@@ -15,8 +15,8 @@ A single ~3 MiB zero-network Rust binary that orchestrates your local CLI tools 
 
 </div>
 
-> [!WARNING]
-> **Pre-Alpha (Work in Progress).** The published `v0.0.1` on crates.io is a crate reservation and CLI skeleton. The Phase 1 topological DAG engine (`v0.1.0`) is under active development.
+> [!NOTE]
+> **Phase 1 (`v0.1.0`) is complete.** `stdo doctor` and `stdo run` are ready, with a topological DAG engine, parallel layers, monitored pipes, switch routing, and a PID ledger. The Embedded Studio UI (`stdo serve`) and SHA-256 content-addressable caching are scheduled for Phase 2 (`v0.2.0`).
 
 ## Why `stdo`?
 
@@ -26,8 +26,8 @@ Modern AI, data, and automation orchestrators (like Dify, Airflow, or Langflow) 
 
 1. **Zero HTTP Client Inside:** `stdo` contains no outbound network stack (`no reqwest`, `no openssl`). Need a REST API? Call `curl`. Need a local LLM? Call `ollama` or `llama-cli`. Need vector or relational queries? Call `sqlite3`.
 2. **True `stdin` / `stdout` Piping (No `ARG_MAX` Crashes):** Passing megabytes of JSON or RAG context through environment variables (`${OUTPUT}`) crashes the OS kernel (`ARG_MAX` limit) and invites shell-injection bugs. `stdo` streams data directly through process file descriptors (`fd 0` and `fd 1`).
-3. **Content-Addressable Cache (CAS):** Every step can be memoized by hashing `SHA-256(cmd + args + stdin)`. If inputs haven't changed, slow LLM inference or heavy data transformations return in `0 ms`.
-4. **Embedded Offline Studio (`stdo serve`):** Ships with a zero-CDN Web UI compiled directly into the Rust binary (`127.0.0.1:8080`) to visualize your execution graph, auto-generate input forms, and stream live `stdout` logs over local WebSockets.
+3. **Content-Addressable Cache (Phase 2):** Step results will be reusable when `SHA-256(cmd + args + stdin)` matches a cached result.
+4. **Embedded Offline Studio (Phase 2):** A local Web UI will visualize the execution graph, generate input forms, and stream logs over WebSockets.
 
 ## What is a Unix DAG?
 
@@ -51,11 +51,8 @@ Before starting subprocesses, `stdo run` sorts and validates the DAG. Use `stdo 
 ### 1. Install
 
 ```bash
-# Via Cargo (Rust 1.75+)
-cargo install stdo # Pre-alpha CLI skeleton (v0.0.1)
-
-# Static binaries coming in v0.1.0
-# curl -fsSL https://adiktiv-technologies.github.io/stdo/install.sh | sh
+# From a checkout of this repository
+cargo install --path . --locked
 ```
 
 ### 2. Define your workflow (`stdo.yaml`)
@@ -140,19 +137,18 @@ output: "{{ steps.local_llm_audit.json.summary }}"
 ### 3. Execute or Inspect Visually
 
 ```bash
-# Validate DAG topology and check required system binaries in $PATH
-$ stdo doctor
+# Validate a bundled workflow and check its required executables
+stdo doctor -f examples/01-parallel-repo-audit.yaml
 
-# Run headlessly in terminal or CI/CD
-$ stdo run -i target_dir=./crates/engine -i severity=CRITICAL
-
-# Launch the 100% offline Studio UI on [http://127.0.0.1:8080](http://127.0.0.1:8080)
-$ stdo serve --watch
+# Run it headlessly from the repository root
+stdo run -f examples/01-parallel-repo-audit.yaml
 ```
+
+See the [workflow gallery](examples/README.md) for the ETL and release gate examples.
 
 ## Embedded Studio (`stdo serve`)
 
-Running `stdo serve` starts a local-only HTTP/WebSocket server bound strictly to `127.0.0.1:8080` with **zero external CDN calls**:
+Phase 2 will add a local-only HTTP/WebSocket server bound to `127.0.0.1:8080` with **zero external CDN calls** and these panels:
 
 - **Left Panel (Auto-Generated Controls):** Renders typed inputs (`string`, `path`, `enum`, `number`, `boolean`) directly from your `stdo.yaml`.
 - **Center Panel (Live SVG DAG):** Visualizes topological layers, parallel branches, and conditional switches. Active nodes pulse in real time as processes execute.
@@ -166,6 +162,7 @@ Running `stdo serve` starts a local-only HTTP/WebSocket server bound strictly to
 - [x] Topological DAG parser (`stdo.yaml`), cycle detector, and `stdo doctor` binary verifier.
 - [x] Buffered `minijinja` stdin templates and monitored `pipe_from` transfers.
 - [x] Parallel execution within each topological layer via `tokio::process`.
+- [x] Self-contained POSIX workflow gallery in `examples/` (fan-out, `pipe_from`, JSON switch routing).
 
 ### Phase 2 — Caching & Embedded Studio (`v0.2.0`)
 

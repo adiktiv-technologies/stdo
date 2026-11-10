@@ -1,0 +1,73 @@
+version: "1.0"
+name: stdo-release-readiness
+
+steps:
+  - id: read_manifest
+    cmd:
+      - awk
+      - |
+        /^[[:space:]]*\[/ && !collecting {
+          in_package = ($0 ~ /^[[:space:]]*\[package\][[:space:]]*$/)
+        }
+        in_package && /^[[:space:]]*version[[:space:]]*=/ {
+          split($0, fields, "\"")
+          version = fields[2]
+        }
+        in_package && /^[[:space:]]*exclude[[:space:]]*=/ {
+          sub(/^[^=]*=[[:space:]]*/, "")
+          collecting = 1
+        }
+        collecting {
+          sub(/[[:space:]]*#.*/, "")
+          excludes = excludes $0
+          if (index($0, "]")) collecting = 0
+        }
+        END {
+          if (version == "" || excludes == "" || collecting) exit 2
+          sub(/,[[:space:]]*\]/, "]", excludes)
+          printf "{\"version\":\"%s\",\"exclude\":%s}\n", version, excludes
+        }
+      - Cargo.toml
+    parse_stdout: json
+  - id: check_documentation
+    cmd:
+      - sh
+      - -c
+      - |
+        [ -r README.md ] && [ -r examples/README.md ] || exit 2
+        total=0 documented=0
+        for workflow in examples/*.yaml examples/*.yml; do
+          [ -f "$workflow" ] || continue
+          total=$((total + 1))
+          if grep -Fq -e "$workflow" examples/README.md; then
+            documented=$((documented + 1))
+          else
+            printf 'Undocumented workflow: %s\n' "$workflow" >&2
+          fi
+        done
+        linked=false
+        if grep -Fq '](examples/README.md)' README.md; then linked=true; fi
+        tests=false
+        if [ -f tests/examples_test.rs ]; then tests=true; fi
+        ready=false
+        if [ "$total" -gt 0 ] && [ "$total" -eq "$documented" ] &&
+           [ "$linked" = true ] && [ "$tests" = true ]; then ready=true; fi
+        printf '{"workflows":%d,"documented":%d,"gallery_linked":%s,"integration_tests_present":%s,"ready":%s}\n' \
+          "$total" "$documented" "$linked" "$tests" "$ready"
+    parse_stdout: json
+
+output: |
+  # stdo release readiness
+  Crate version: `{{ steps.read_manifest.json.version }}`
+  Cargo exclusions: {{ steps.read_manifest.json.exclude | join(", ") }}
+  Documented workflows: {{ steps.check_documentation.json.documented }}/{{ steps.check_documentation.json.workflows }}
+  Gallery linked from README: {% if steps.check_documentation.json.gallery_linked %}yes{% else %}no{% endif %}
+  Gallery integration test file present: {% if steps.check_documentation.json.integration_tests_present %}yes{% else %}no{% endif %}
+  Status: {% if steps.check_documentation.json.ready %}READY{% else %}REVIEW{% endif %}
+
+  ```json
+  {
+    "manifest": {{ steps.read_manifest.stdout | trim }},
+    "documentation": {{ steps.check_documentation.stdout | trim }}
+  }
+  ```

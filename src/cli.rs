@@ -1,6 +1,6 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 
 #[derive(Parser)]
 #[command(
@@ -13,12 +13,36 @@ pub struct Cli {
     pub command: Command,
 }
 
+#[derive(Args)]
+pub struct WorkflowFile {
+    /// Workflow file (defaults to stdo.yaml).
+    #[arg(value_name = "FILE")]
+    positional_file: Option<PathBuf>,
+    /// Workflow file, as an alternative to the positional argument.
+    #[arg(
+        short = 'f',
+        long = "file",
+        value_name = "FILE",
+        conflicts_with = "positional_file"
+    )]
+    named_file: Option<PathBuf>,
+}
+
+impl WorkflowFile {
+    pub fn path(&self) -> &Path {
+        self.named_file
+            .as_deref()
+            .or(self.positional_file.as_deref())
+            .unwrap_or_else(|| Path::new("stdo.yaml"))
+    }
+}
+
 #[derive(Subcommand)]
 pub enum Command {
     /// Execute a workflow DAG.
     Run {
-        #[arg(default_value = "stdo.yaml")]
-        file: PathBuf,
+        #[command(flatten)]
+        file: WorkflowFile,
         #[arg(short, long, value_name = "KEY=VALUE")]
         input: Vec<String>,
         /// Bypass graph size limits.
@@ -34,8 +58,8 @@ pub enum Command {
     },
     /// Validate the workflow DAG and check required executables.
     Doctor {
-        #[arg(default_value = "stdo.yaml")]
-        file: PathBuf,
+        #[command(flatten)]
+        file: WorkflowFile,
         /// Bypass graph size limits.
         #[arg(long)]
         force: bool,

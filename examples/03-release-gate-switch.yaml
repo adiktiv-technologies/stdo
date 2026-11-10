@@ -1,0 +1,35 @@
+version: "1.0"
+name: release-gate-switch
+
+inputs:
+  severity:
+    type: enum
+    default: LOW
+    values: [LOW, CRITICAL]
+
+steps:
+  - id: assess
+    cmd:
+      - sh
+      - -c
+      - |
+        block=false
+        if [ "$1" = CRITICAL ]; then block=true; fi
+        printf '{"severity":"%s","block_release":%s}\n' "$1" "$block"
+      - stdo
+      - "{{ inputs.severity }}"
+    parse_stdout: json
+  - id: gate
+    type: switch
+    condition: "{{ steps.assess.json.block_release }}"
+    cases:
+      "true": record_incident
+      "false": approve_release
+  - id: record_incident
+    cmd: [echo, 'BLOCK: incident recorded']
+  - id: approve_release
+    cmd: [echo, 'PASS: release approved']
+
+output: |
+  Severity: {{ steps.assess.json.severity }}
+  {% if steps.assess.json.block_release %}{{ steps.record_incident.stdout | trim }}{% else %}{{ steps.approve_release.stdout | trim }}{% endif %}

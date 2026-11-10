@@ -1,0 +1,26 @@
+version: "1.0"
+name: monitored-pipe-etl
+
+steps:
+  - id: extract
+    cmd: [sh, -c, 'printf "%s\n" keep:pear drop:plum keep:apple keep:banana']
+  - id: filter
+    cmd: [grep, '^keep:']
+    pipe_from: extract
+  - id: normalize
+    cmd: [cut, -d, ':', -f, '2']
+    pipe_from: filter
+  - id: order
+    cmd: [sh, -c, 'LC_ALL=C exec sort']
+    pipe_from: normalize
+  - id: summarize
+    cmd:
+      - awk
+      - 'NR == 1 { first = $0 } { last = $0 } END { printf "{\"count\":%d,\"first\":\"%s\",\"last\":\"%s\"}\n", NR, first, last }'
+    pipe_from: order
+    parse_stdout: json
+
+output: |
+  Kept {{ steps.summarize.json.count }} records
+  First: {{ steps.summarize.json.first }}
+  Last: {{ steps.summarize.json.last }}
