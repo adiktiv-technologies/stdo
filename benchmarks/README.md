@@ -19,20 +19,20 @@ stdo run -f benchmarks/parallel-bash-baseline.yaml
 
 ## Reference run
 
-Darwin arm64, release-profile build of `stdo 0.5.1` from release commit `5f25b98`, 15 measured trials and two warmups per mode. The maintainer ran the benchmark on the Apple Silicon host.
+Darwin arm64, release-profile build of `stdo 0.5.2` from release commit `9f3f2cf`, 15 measured trials and two warmups per mode. The maintainer ran the benchmark on the Apple Silicon host.
 
 | Mode | Wall p50 (ms) | Wall p95 (ms) | Mean TTFB (ms) | Peak monitored bytes | OS max RSS (KiB) | Cache hits |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Sequential Bash | 222.00 | 237.20 | 59.06 | n/a | 2,192 | n/a |
-| Parallel Bash | 110.00 | 116.00 | 58.97 | n/a | 2,160 | n/a |
-| Cold stdo (`--no-cache`) | 118.59 | 121.67 | 54.84 | 393,233 | 4,112 | 0% |
-| Warm stdo | 63.22 | 63.74 | 4.86 | 262,178 | 4,000 | 60% |
+| Sequential Bash | 237.00 | 243.80 | 59.78 | n/a | 2,176 | n/a |
+| Parallel Bash | 111.00 | 120.00 | 58.43 | n/a | 2,176 | n/a |
+| Cold stdo (`--no-cache`) | 126.39 | 128.80 | 58.35 | 393,233 | 4,320 | 0% |
+| Warm stdo | 63.78 | 65.14 | 5.46 | 262,178 | 4,064 | 60% |
 
-Cold `stdo` was 8.59 ms behind Parallel Bash at p50 in this run. Warm `stdo` showed median speedups of **1.74×** over Parallel Bash and **3.51×** over Sequential Bash.
+Cold `stdo` was 15.39 ms behind Parallel Bash at p50 in this run. Warm `stdo` showed median speedups of **1.74×** over Parallel Bash and **3.72×** over Sequential Bash.
 
 Bash wall time comes from the shell's `time` keyword. Separate executions estimate Bash TTFB from the earliest completed one-line worker, including `jq` timestamp overhead. `stdo bench` measures the first stdout chunk from any step with its internal clock. Both calculate percentiles by linear interpolation. Peak monitored bytes count `stdo` buffers only and are separate from process RSS. This workload measures scheduling overlap and cache reuse with deliberately delayed workers. JSONL validation and process-group cleanup are covered by qualification tests.
 
-The suite measures RSS in separate runs using `/usr/bin/time -l` on macOS or GNU `/usr/bin/time -v` on Linux. It reports the largest OS-provided peak among the runs for each mode in KiB. This value follows the platform tool's accounting and represents neither the sum of concurrent process RSS nor the monitored-buffer budget. If the tool cannot report RSS, the suite prints `n/a`.
+The suite measures RSS in separate runs using `/usr/bin/time -l` on macOS or GNU `/usr/bin/time -v` on Linux. On macOS, this is the maximum resident set size from `wait4` (the `ru_maxrss` field). The suite reports the largest OS-provided peak among the runs for each mode in KiB. This value follows the platform tool's accounting and represents neither the sum of concurrent process RSS nor the monitored-buffer budget. If the tool cannot report RSS, the suite prints `n/a`.
 
 ## Live Ollama qualification
 

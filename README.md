@@ -18,7 +18,7 @@ A compact, zero-network Rust binary that orchestrates local CLI tools (`curl`, `
 ![stdo Studio showing a LOW-severity release gate with three DAG layers and run telemetry](https://raw.githubusercontent.com/adiktiv-technologies/stdo/main/assets/studio-preview.svg)
 
 > [!NOTE]
-> **Current release `v0.5.1`.** Phases 1 through 5 are complete. This release adds Ollama and HTTP workflows, live Studio timers, per-step output cards, and inline audio playback. [Changelog](CHANGELOG.md)
+> Phases 1 through 5 are complete. See the Crates.io badge above for the current version and the [changelog](CHANGELOG.md) for release details.
 
 ## Why `stdo`?
 
@@ -207,7 +207,7 @@ ollama run phonon:latest "Good morning. Here is a short update before your first
 ollama run gemma4 --hidethinking "Tell me a fun fact about owls in two sentences." | ollama run phonon:latest
 ```
 
-To save the spoken reply as a WAV file with `stdo`, save this workflow as `speech.yaml` and run `stdo run -f speech.yaml`. Ollama writes WAV bytes when stdout is redirected, and the last step writes those bytes to `speech.wav`. [Ollama WAV output](https://docs.ollama.com/capabilities/speech#save-audio-to-a-file)
+Save this workflow as `speech.yaml` and run `stdo run -f speech.yaml`. Phonon streams WAV bytes into a sibling temporary file. The final step replaces `speech.wav` after Phonon and the staged write succeed. [Runnable gallery example](examples/07-ollama-gemma4-phonon-speech.yaml) · [Ollama WAV output](https://docs.ollama.com/capabilities/speech#save-audio-to-a-file)
 
 ```yaml
 version: "1.0"
@@ -219,10 +219,50 @@ steps:
     cmd: [ollama, run, "phonon:latest"]
     pipe_from: answer
     capture_stdout: false
-  - id: save_wav
-    cmd: [tee, speech.wav]
+  - id: stage_wav
+    cmd:
+      - sh
+      - -c
+      - |
+        set -eu
+        case "$1" in /*) target=$1 ;; *) target=./$1 ;; esac
+        tmp="$target.tmp.$$"
+        umask 077
+        (set -C; : > "$tmp")
+        trap 'rm -f "$tmp"' 0
+        trap 'exit 1' HUP INT TERM
+        cat > "$tmp"
+        printf '%s\n' "$$"
+        trap - 0 HUP INT TERM
+      - stage-wav
+      - "speech.wav"
     pipe_from: speak
-    capture_stdout: false
+
+  - id: save_wav
+    cmd:
+      - sh
+      - -c
+      - |
+        set -eu
+        case "$1" in /*) target=$1 ;; *) target=./$1 ;; esac
+        IFS= read -r pid
+        case "$pid" in ''|*[!0-9]*) exit 1 ;; esac
+        tmp="$target.tmp.$pid"
+        trap 'rm -f "$tmp"' 0
+        trap 'exit 1' HUP INT TERM
+        bytes=$(wc -c < "$tmp")
+        [ ! -d "$target" ]
+        mv -f "$tmp" "$target"
+        printf '%s\n' "$bytes"
+      - write-wav
+      - "speech.wav"
+    stdin: |
+      {{ steps.stage_wav.stdout | trim }}
+      {# The dependency below waits for Phonon's successful exit as well. #}
+      {{ steps.speak.exit_code }}
+
+output: |
+  Wrote {{ steps.save_wav.stdout | trim }} bytes to speech.wav
 ```
 
 ### Benchmark workflows and export audit reports
@@ -239,16 +279,18 @@ stdo bench examples/01-parallel-repo-audit.yaml examples/02-monitored-pipe-etl.y
 
 Step TTFB measures from spawn to the first stdout chunk, or the read duration on a cache hit. Workflow TTFB is elapsed time to the first stdout from any step, with total duration as the fallback for a silent run. Benchmarks load each workflow once before its trials.
 
-The [qualification benchmark](benchmarks/README.md) used `stdo 0.5.1` on Darwin arm64 with 15 measured trials and two warmups per mode.
+The [qualification benchmark](benchmarks/README.md) used `stdo 0.5.2` on Darwin arm64 with 15 measured trials and two warmups per mode.
+
+On macOS, `/usr/bin/time -l` reports the maximum resident set size from `wait4` (the `ru_maxrss` field). The benchmark reports that peak in KiB separately from monitored buffers.
 
 | Mode | Wall p50 (ms) | Wall p95 (ms) | Mean TTFB (ms) | Peak monitored bytes | OS max RSS (KiB) |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Sequential Bash | 222.00 | 237.20 | 59.06 | n/a | 2,192 |
-| Parallel Bash | 110.00 | 116.00 | 58.97 | n/a | 2,160 |
-| Cold `stdo --no-cache` | 118.59 | 121.67 | 54.84 | 393,233 | 4,112 |
-| Warm `stdo` | 63.22 | 63.74 | 4.86 | 262,178 | 4,000 |
+| Sequential Bash | 237.00 | 243.80 | 59.78 | n/a | 2,176 |
+| Parallel Bash | 111.00 | 120.00 | 58.43 | n/a | 2,176 |
+| Cold `stdo --no-cache` | 126.39 | 128.80 | 58.35 | 393,233 | 4,320 |
+| Warm `stdo` | 63.78 | 65.14 | 5.46 | 262,178 | 4,064 |
 
-With three of five steps served from cache, warm `stdo` took **57%** of Parallel Bash's median time and **28%** of Sequential Bash's on this workload.
+With three of five steps served from cache, warm `stdo` took **57%** of Parallel Bash's median time and **27%** of Sequential Bash's on this workload.
 
 In a separate live Apple Silicon run, Gemma 4 answered the prompt in 15.8 s and Phonon produced an 814,124-byte WAV in 942 ms with 402 KB of peak monitored buffers for the workflow. Local PR triage took 19.5 s cold and 0.41 ms on a warm cache hit. [Live qualification results](benchmarks/README.md#live-ollama-qualification)
 
