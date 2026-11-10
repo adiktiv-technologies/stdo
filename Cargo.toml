@@ -9,7 +9,7 @@ homepage = "https://github.com/adiktiv-technologies/stdo"
 readme = "README.md"
 keywords = ["workflow", "dag", "orchestrator", "cli", "unix"]
 categories = ["command-line-utilities", "development-tools"]
-exclude = ["AGENTS.md", ".github/", ".claude/", "release-plz.toml", "assets/"]
+exclude = ["AGENTS.md", ".github/", ".claude/", "release-plz.toml", "assets/", "benchmarks/"]
 
 [dependencies]
 clap = { version = "4", default-features = false, features = ["derive", "std", "help", "usage", "error-context"] }

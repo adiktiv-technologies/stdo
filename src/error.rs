@@ -33,6 +33,12 @@ pub enum Error {
     Process { step: String, source: io::Error },
     #[error("step {step:?} timed out after {timeout_ms} ms")]
     StepTimeout { step: String, timeout_ms: u64 },
+    #[error("step {step:?} cannot start its atomic pipe because producer {producer:?} returned {status}")]
+    AtomicPipe {
+        step: String,
+        producer: String,
+        status: std::process::ExitStatus,
+    },
     #[error("step {step:?} failed with {status}{}", Diagnostic(.stderr))]
     StepFailed {
         step: String,

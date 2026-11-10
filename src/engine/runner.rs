@@ -5,6 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use sha2::{Digest, Sha256};
 use tokio::{
     io::{AsyncRead, AsyncReadExt},
     process::{Child, Command},
@@ -34,6 +35,7 @@ pub(super) struct Captured {
 pub(super) struct Running {
     started: Instant,
     child: Child,
+    group: u32,
     step: String,
     input: Option<Input>,
     ignore_exit_code: bool,
@@ -54,7 +56,10 @@ impl Running {
         ledger: ProcessLedger,
     ) -> Result<Self, Error> {
         let started = Instant::now();
-        let child = Command::new(&command[0])
+        let mut process = Command::new(&command[0]);
+        #[cfg(unix)]
+        process.process_group(0);
+        let child = process
             .args(&command[1..])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -62,14 +67,12 @@ impl Running {
             .kill_on_drop(true)
             .spawn()
             .map_err(|source| process_error(step, source))?;
-        let entry = ledger.record(
-            child.id().expect("new child has a PID"),
-            step,
-            command.to_vec(),
-        );
+        let group = child.id().expect("new child has a PID");
+        let entry = ledger.record(group, step, command.to_vec());
         Ok(Self {
             started,
             child,
+            group,
             step: step.to_owned(),
             input,
             ignore_exit_code,
@@ -86,6 +89,7 @@ impl Running {
         mut cancel: watch::Receiver<bool>,
         mut timing: Option<&mut StepTimer>,
         parse_jsonl: bool,
+        capture_stdout: bool,
         pipes: &mut Outputs,
     ) -> Result<Option<Captured>, Error> {
         let mut stdout = self.child.stdout.take().expect("stdout is piped");
@@ -96,6 +100,8 @@ impl Running {
         let mut stderr_buffer = budget.buffer();
         let mut observed_status = None;
         let mut first_byte = None;
+        let mut streamed_bytes = 0;
+        let mut streamed_digest = (!capture_stdout).then(Sha256::new);
         let timeout = async {
             match self.timeout_ms {
                 Some(ms) => {
@@ -127,8 +133,9 @@ impl Running {
             result = async {
                 let drain = async {
                     let stdout_read = async {
-                        let mut jsonl = parse_jsonl.then(|| Collector::new(&budget, step));
+                        let mut jsonl = parse_jsonl.then(|| Collector::new(&budget, step, capture_stdout));
                         let mut chunk = read_buffer(&budget, step)?;
+                        let mut normalized = budget.buffer();
                         loop {
                             let bytes = read_chunk(&mut stdout, &mut chunk, step).await?;
                             if bytes.is_empty() { break; }
@@ -138,17 +145,30 @@ impl Running {
                                     timer.stdout_chunk(bytes);
                                 }
                             }
-                            let start = stdout_buffer.bytes().len();
-                            match &mut jsonl {
-                                Some(collector) => collector.push(bytes, &mut stdout_buffer),
-                                None => stdout_buffer.append(bytes, step),
-                            }?;
-                            pipes.forward(&stdout_buffer.bytes()[start..], &budget, step).await?;
+                            let bytes = if let Some(collector) = &mut jsonl {
+                                collector.push(bytes, &mut normalized)?;
+                                normalized.bytes()
+                            } else {
+                                bytes
+                            };
+                            if capture_stdout {
+                                stdout_buffer.append(bytes, step)?;
+                            } else if let Some(digest) = &mut streamed_digest {
+                                streamed_bytes += bytes.len();
+                                digest.update(bytes);
+                            }
+                            pipes.forward(bytes, &budget, step).await?;
+                            normalized.clear();
                         }
                         if let Some(collector) = jsonl {
-                            let start = stdout_buffer.bytes().len();
-                            collector.finish(&mut stdout_buffer)?;
-                            pipes.forward(&stdout_buffer.bytes()[start..], &budget, step).await?;
+                            collector.finish(&mut normalized)?;
+                            if capture_stdout {
+                                stdout_buffer.append(normalized.bytes(), step)?;
+                            } else if let Some(digest) = &mut streamed_digest {
+                                streamed_bytes += normalized.bytes().len();
+                                digest.update(normalized.bytes());
+                            }
+                            pipes.forward(normalized.bytes(), &budget, step).await?;
                         }
                         Ok::<_, Error>(())
                     };
@@ -188,17 +208,24 @@ impl Running {
                 Ok::<_, Error>(Some(status))
             } => result,
         };
-        if !matches!(result, Ok(Some(_))) && observed_status.is_none() {
+        let failed = !matches!(result, Ok(Some(status)) if status.success());
+        let group_signalled = if failed {
+            kill_group(self.group).await
+        } else {
+            false
+        };
+        if failed && observed_status.is_none() {
             match self.child.try_wait() {
                 Ok(Some(status)) => {
                     observed_status = Some(status);
-                    self.ledger.finished(self.entry, status, false);
+                    self.ledger.finished(self.entry, status, group_signalled);
                 }
                 _ => {
                     let requested = self.child.start_kill().is_ok();
                     if let Ok(status) = self.child.wait().await {
                         observed_status = Some(status);
-                        self.ledger.finished(self.entry, status, requested);
+                        self.ledger
+                            .finished(self.entry, status, requested || group_signalled);
                     }
                 }
             }
@@ -210,7 +237,15 @@ impl Running {
             if let Some(at) = first_byte {
                 timer.first_byte(self.started, at);
             }
-            timer.set_streams(stdout_buffer.bytes(), stderr_buffer.bytes());
+            if let Some(digest) = streamed_digest {
+                timer.set_stream_stats(
+                    streamed_bytes,
+                    Some(format!("{:x}", digest.finalize())),
+                    stderr_buffer.bytes(),
+                );
+            } else {
+                timer.set_streams(stdout_buffer.bytes(), stderr_buffer.bytes());
+            }
             if matches!(result, Ok(None)) {
                 timer.set_status(Status::Cancelled);
             } else if matches!(result, Err(Error::StepTimeout { .. })) {
@@ -238,6 +273,22 @@ impl Running {
             status,
         }))
     }
+
+    pub(super) fn group(&self) -> u32 {
+        self.group
+    }
+}
+
+// Signal the Unix group through the system utility.
+pub(super) async fn kill_group(group: u32) -> bool {
+    Command::new("/bin/kill")
+        .args(["-KILL", "--", &format!("-{group}")])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .await
+        .is_ok_and(|status| status.success())
 }
 
 async fn read_pipe(

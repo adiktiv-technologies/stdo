@@ -15,8 +15,10 @@ A compact, zero-network Rust binary that orchestrates local CLI tools (`curl`, `
 
 </div>
 
+![stdo Studio showing a LOW-severity release gate with three DAG layers and run telemetry](https://raw.githubusercontent.com/adiktiv-technologies/stdo/main/assets/studio-preview.svg)
+
 > [!NOTE]
-> **Phases 1, 2, and 3 (`v0.3.0`) are complete.** `stdo` includes the DAG runner, SHA-256 caching, the offline Studio with live SSE output and file reload, JSONL routing, pipeline benchmarks, and offline execution audits.
+> **Phases 1 through 5 (`v0.5.0`) are complete.** `stdo` includes the offline Studio, benchmark and audit reports, bounded-memory pass-through, atomic pipes, process-group cleanup, and content-hashed executable cache keys.
 
 ## Why `stdo`?
 
@@ -71,17 +73,21 @@ cargo install --path . --locked
 - **Buffered Templating (`stdin: "{{ steps.x.stdout }}"`):** Waits for step `x` to complete, then injects its output into a template (ideal for assembling multi-source prompts).
 - **Monitored Pipe (`pipe_from: step_x`):** Forwards stdout in chunks of up to 64 KiB while capturing bounded output. Eligible producers and consumers run concurrently with backpressure. Downstream EOF follows successful producer completion. Buffered template references and unresolved switch branches still wait for their dependencies. A cache-enabled consumer waits for complete stdin to compute its cache key.
 
+Set `capture_stdout: false` on a command to stream stdout to live consumers or discard it when unpiped. The stream can exceed 8 MiB while the queue stays bounded by backpressure. Telemetry still counts bytes and measures TTFB, and audit reports hash the stream incrementally. Uncaptured stdout cannot be replayed, exposed as `steps.<id>.stdout` or `steps.<id>.json`, cached, or parsed as a single JSON document. Streaming JSONL still validates and normalizes records, with a 64 KiB limit per record.
+
+Set `pipe_mode: atomic` on a `pipe_from` consumer to start it only after the captured producer output has passed validation and the producer has exited with status zero. This is useful for steps that write to databases or external systems. With the default `pipe_mode: concurrent`, a consumer may act on partial output before a later producer failure.
+
 Set `parse_stdout: jsonl` to validate each non-empty JSON Lines record as stdout arrives. The runner compacts each record, ignores blank lines, and forwards complete records to live `pipe_from` consumers. An invalid record fails the producer with its line number. Templates and switches can use `steps.<id>.json | length` or index a record with `steps.<id>.json[0]`. Try [the JSONL sensor example](examples/06-jsonl-sensor-stream.yaml).
 
-By default, `run` and `doctor` allow up to 64 steps, 16 layers, and 16 steps per layer. Use `--force` to bypass these graph limits. Subprocess streams still have an 8 MiB limit each, with a shared 32 MiB budget for captured data, pipe read buffers, and rendered I/O buffers. On failure, `stdo run` prints the PID and last known status of each direct child it started.
+By default, `run` and `doctor` allow up to 64 steps, 16 layers, and 16 steps per layer. Use `--force` to bypass these graph limits. Captured streams have an 8 MiB limit each, with a shared 32 MiB budget for captured data, pipe buffers, and rendered I/O buffers. On failure, `stdo run` prints the PID and last known status of each direct child it started.
 
 Use `{{ inputs.key }}` in command arguments and pass step output through `stdin` templates or `pipe_from`. The workflow's `output` template determines what `stdo run` writes to stdout.
 
 Pass `--telemetry` (`-t`) to print step and layer timings, time to first byte (TTFB), captured byte counts, and peak monitored buffer usage to stderr. Failed runs include a partial report. Failed commands also surface captured stderr above the PID ledger.
 
-Set `timeout_ms: 5000` to give each command attempt a five-second deadline, including pipe I/O. On timeout, the runner kills and reaps the direct child and marks it `TimedOut` in the PID ledger. Set `retry: { attempts: 3, backoff_ms: 250 }` to allow up to three total attempts, with a fixed 250 ms delay between failures. Attempts must be between 1 and 10, and the delay defaults to 0 ms with a maximum of 60,000 ms. Non-ignored exit failures, timeouts, and invalid JSON or JSONL can trigger retries. Retrying steps buffer piped stdin for replay and publish output only from a successful attempt. Telemetry and audit reports show the number of attempts. Step duration includes backoff.
+Set `timeout_ms: 5000` to give each command attempt a five-second deadline, including pipe I/O. On timeout, the runner kills the Unix process group, reaps the direct child, and marks it `TimedOut` in the PID ledger. Set `retry: { attempts: 3, backoff_ms: 250 }` to allow up to three total attempts, with a fixed 250 ms delay between failures. Attempts must be between 1 and 10, and the delay defaults to 0 ms with a maximum of 60,000 ms. Non-ignored exit failures, timeouts, and invalid JSON or JSONL can trigger retries. Retrying steps buffer piped stdin for replay and publish output only from a successful attempt. Telemetry and audit reports show the number of attempts. Step duration includes backoff.
 
-Set `cache: true` on a deterministic command step to reuse its output from `.stdo/cache/` under the working directory. The SHA-256 key covers rendered arguments, stdin bytes, exit-code and output-parsing settings, and the executable's canonical path, size, and modification time. Declare additional dependencies with `cache_files: ["{{ inputs.config_path }}"]` and `cache_env: ["LANG", "TZ"]`. File paths are relative to the working directory and must resolve to regular files within it. The key includes their contents and distinguishes unset environment variables from empty values. Pass `--no-cache` to bypass cache reads, writes, and dependency hashing. Telemetry reports cache hits separately from executed commands.
+Set `cache: true` on a deterministic command step to reuse its output from `.stdo/cache/` under the working directory. The SHA-256 key covers rendered arguments, stdin bytes, exit-code and output-parsing settings, and the executable's content digest and metadata. Executables that cannot be read because of file permissions use metadata only. Declare additional dependencies with `cache_files: ["{{ inputs.config_path }}"]` and `cache_env: ["LANG", "TZ"]`. File paths are relative to the working directory and must resolve to regular files within it. The key includes their contents and distinguishes unset environment variables from empty values. Pass `--no-cache` to bypass cache reads, writes, and dependency hashing. Telemetry reports cache hits separately from executed commands.
 
 ```yaml
 version: "1.0"
@@ -141,6 +147,7 @@ steps:
 
   - id: record_incident
     pipe_from: local_llm_audit
+    pipe_mode: atomic
     cmd:
       - sqlite3
       - "-batch"
@@ -177,6 +184,33 @@ stdo run -t -f examples/01-parallel-repo-audit.yaml
 
 See the [workflow gallery](examples/README.md) for the ETL and release gate examples.
 
+### Stream local speech with Ollama and Phonon
+
+Gradium’s Phonon family streams speech as it generates it. Ollama’s `phonon:latest` uses the 31M English checkpoint and selects the `default` voice when you omit `--voice`. These commands use the Phonon package for Apple Silicon and Ollama 0.40.9 or later. [Gradium models](https://huggingface.co/gradium) · [Phonon 31M English](https://huggingface.co/gradium/phonon-31m-en) · [Ollama speech guide](https://docs.ollama.com/capabilities/speech)
+
+```sh
+ollama run phonon:latest "Good morning. Here is a short update before your first meeting."
+ollama run gemma4 --hidethinking "Tell me a fun fact about owls in two sentences." | ollama run phonon:latest
+```
+
+To save the spoken reply as a WAV file with `stdo`, save this workflow as `speech.yaml` and run `stdo run -f speech.yaml`. Ollama writes WAV bytes when stdout is redirected, and the last step writes those bytes to `speech.wav`. [Ollama WAV output](https://docs.ollama.com/capabilities/speech#save-audio-to-a-file)
+
+```yaml
+version: "1.0"
+name: spoken-owl-fact
+steps:
+  - id: answer
+    cmd: [ollama, run, gemma4, --hidethinking, "Tell me a fun fact about owls in two sentences."]
+  - id: speak
+    cmd: [ollama, run, "phonon:latest"]
+    pipe_from: answer
+    capture_stdout: false
+  - id: save_wav
+    cmd: [tee, speech.wav]
+    pipe_from: speak
+    capture_stdout: false
+```
+
 ### Benchmark workflows and export audit reports
 
 ```sh
@@ -191,11 +225,11 @@ stdo bench examples/01-parallel-repo-audit.yaml examples/02-monitored-pipe-etl.y
 
 Step TTFB measures from spawn to the first stdout chunk, or the read duration on a cache hit. Workflow TTFB is elapsed time to the first stdout from any step, with total duration as the fallback for a silent run. Benchmarks load each workflow once before its trials.
 
+In the [qualification benchmark](benchmarks/README.md), sequential Bash measured 251.17 ms at p50 and 259.96 ms at p95. The same workload took 120.76 ms at p50 and 124.84 ms at p95 with `stdo --no-cache`, and 64.15 ms at p50 and 66.88 ms at p95 with a warm cache. Mean TTFB was 58.58 ms, 56.71 ms, and 5.14 ms respectively. Peak monitored buffers were 393,228 bytes cold and 262,178 bytes warm.
+
 ## Embedded Studio (`stdo serve`)
 
 Studio is an offline workflow editor for wiring DAG steps, editing YAML, and inspecting runs in your browser.
-
-![stdo Studio showing a LOW-severity release gate with three DAG layers and run telemetry](https://raw.githubusercontent.com/adiktiv-technologies/stdo/main/assets/studio-preview.svg)
 
 ```sh
 stdo serve -f examples/03-release-gate-switch.yaml --port 8080
@@ -235,6 +269,13 @@ Open [Studio](http://127.0.0.1:8080) in your browser. With no file argument, Stu
 
 - [x] True concurrent producer-consumer streaming across `pipe_from` chains with overlapping upstream execution and downstream TTFB.
 - [x] Step-level `timeout_ms`, retry with backoff, and hermetic cache dependencies (`cache_files` / `cache_env`).
+
+### Phase 5 — Unbounded Streaming, Atomic Pipes & Qualification (`v0.5.0`)
+
+- [x] Bounded-memory pass-through for arbitrarily long stdout streams.
+- [x] Atomic pipe gating and Unix process-group cleanup.
+- [x] SHA-256 executable content hashing for cache invalidation.
+- [x] Adversarial stream tests and a reproducible [benchmark suite](benchmarks/README.md).
 
 ## License
 

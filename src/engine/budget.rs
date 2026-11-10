@@ -80,6 +80,10 @@ impl Buffer {
         &mut self.bytes
     }
 
+    pub(super) fn clear(&mut self) {
+        self.bytes.clear();
+    }
+
     pub(super) fn limit_error(&self, step: &str) -> Option<Error> {
         self.exceeded.map(|limit_bytes| Error::MemoryLimitExceeded {
             step: step.to_owned(),
@@ -117,7 +121,10 @@ impl Buffer {
             self.exceeded = Some(limit);
             return Err(io::Error::other("workflow buffer limit exceeded"));
         }
-        if let Err(error) = self.bytes.try_reserve_exact(additional) {
+        if let Err(error) = self
+            .bytes
+            .try_reserve_exact(required.saturating_sub(self.bytes.len()))
+        {
             self.budget.release(additional);
             return Err(io::Error::other(error));
         }

@@ -4,7 +4,7 @@ use minijinja::Environment;
 
 use crate::{engine::template, error::Error};
 
-use super::schema::{StepKind, Workflow};
+use super::schema::{PipeMode, StepKind, Workflow};
 
 pub const MAX_STEPS: usize = 64;
 pub const MAX_DEPTH: usize = 16;
@@ -33,7 +33,7 @@ impl Graph {
                 // Cache keys and retries need complete stdin. A retrying
                 // producer only exposes the output of its successful attempt.
                 let source = self.stream_sources[index].filter(|&source| {
-                    matches!(&workflow.steps[index].kind, StepKind::Command(step) if !step.retries() && (no_cache || !step.cache))
+                    matches!(&workflow.steps[index].kind, StepKind::Command(step) if step.pipe_mode == PipeMode::Concurrent && !step.retries() && (no_cache || !step.cache))
                         && matches!(&workflow.steps[source].kind, StepKind::Command(step) if !step.retries())
                 });
                 let group = self.dependencies[index]
@@ -137,6 +137,7 @@ impl Graph {
                         &switch.condition,
                         &location,
                         &indices,
+                        workflow,
                         &mut dependencies[index],
                     )?;
                     continue;
@@ -148,6 +149,7 @@ impl Graph {
                     source,
                     &location,
                     &indices,
+                    workflow,
                     &mut dependencies[index],
                 )?;
             }
@@ -165,6 +167,7 @@ impl Graph {
                 output,
                 "workflow output",
                 &indices,
+                workflow,
                 &mut BTreeSet::new(),
             )?;
         }
@@ -188,11 +191,28 @@ impl Graph {
                 "WARNING: Graph safety limits bypassed with --force (steps: {steps}, depth: {depth}, max_width: {max_width})"
             );
         }
-        Ok(Self {
+        let graph = Self {
             layers,
             dependencies,
             stream_sources,
-        })
+        };
+        let plan = graph.execution_plan(workflow, false);
+        for (index, step) in workflow.steps.iter().enumerate() {
+            if let StepKind::Command(command) = &step.kind {
+                if let Some(source) = &command.pipe_from {
+                    let source_index = indices[source.as_str()];
+                    if !captures_stdout(workflow, source_index)
+                        && plan.live_sources[index] != Some(source_index)
+                    {
+                        return Err(Error::InvalidWorkflow(format!(
+                            "step {:?} needs a live pipe from {source:?} because it uses capture_stdout: false",
+                            step.id
+                        )));
+                    }
+                }
+            }
+        }
+        Ok(graph)
     }
 }
 
@@ -208,6 +228,7 @@ fn add_template_dependencies(
     source: &str,
     location: &str,
     indices: &HashMap<&str, usize>,
+    workflow: &Workflow,
     dependencies: &mut BTreeSet<usize>,
 ) -> Result<(), Error> {
     let template = environment
@@ -224,14 +245,21 @@ fn add_template_dependencies(
             )));
         }
         if let Some(path) = reference.strip_prefix("steps.") {
-            let id = path
-                .split('.')
-                .next()
-                .expect("split yields at least one item");
-            dependencies.insert(step_index(indices, location, id)?);
+            let (id, field) = path.split_once('.').unwrap_or((path, ""));
+            let index = step_index(indices, location, id)?;
+            if !captures_stdout(workflow, index) && !matches!(field, "stderr" | "exit_code") {
+                return Err(Error::InvalidWorkflow(format!(
+                    "{location} references {reference:?}, but step {id:?} uses capture_stdout: false"
+                )));
+            }
+            dependencies.insert(index);
         }
     }
     Ok(())
+}
+
+fn captures_stdout(workflow: &Workflow, index: usize) -> bool {
+    !matches!(&workflow.steps[index].kind, StepKind::Command(step) if !step.capture_stdout)
 }
 
 fn sort_layers(

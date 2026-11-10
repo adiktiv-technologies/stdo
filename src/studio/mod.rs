@@ -468,6 +468,24 @@ mod tests {
         assert_eq!(step["retry"], json!({"attempts": 2, "backoff_ms": 0}));
         assert_eq!(step["cache_files"], json!(["Cargo.toml"]));
         assert_eq!(step["cache_env"], json!(["LANG"]));
+        let mut draft = draft;
+        draft["workflow"]["steps"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({
+                "id": "sink", "cmd": ["cat"], "pipe_from": "say",
+                "capture_stdout": false, "pipe_mode": "atomic"
+            }));
+        let draft = json!({"workflow": draft["workflow"]}).to_string();
+        let (headers, response) = exchange(&studio, format!(
+            "POST /api/preview HTTP/1.1\r\nHost: 127.0.0.1:8080\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{draft}",
+            draft.len()
+        )).await;
+        assert!(headers.starts_with("HTTP/1.1 200 OK\r\n"), "{headers}");
+        let draft: serde_json::Value = serde_json::from_str(&response).unwrap();
+        assert_eq!(draft["graph_error"], serde_json::Value::Null);
+        assert_eq!(draft["workflow"]["steps"][1]["capture_stdout"], false);
+        assert_eq!(draft["workflow"]["steps"][1]["pipe_mode"], "atomic");
 
         let (headers, response) = exchange(&studio, format!(
             "POST /api/run HTTP/1.1\r\nHost: 127.0.0.1:8080\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",

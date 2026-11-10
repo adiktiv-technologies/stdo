@@ -383,11 +383,24 @@ impl StepTimer {
     }
 
     pub(super) fn set_streams(&mut self, stdout: &[u8], stderr: &[u8]) {
+        let digest = self
+            .telemetry
+            .hash_stdout
+            .then(|| crate::report::sha256(stdout));
+        self.set_stream_stats(stdout.len(), digest, stderr);
+    }
+
+    pub(super) fn set_stream_stats(
+        &mut self,
+        stdout: usize,
+        digest: Option<String>,
+        stderr: &[u8],
+    ) {
         let record = self.record.as_mut().expect("active step");
-        record.stdout = stdout.len();
+        record.stdout = stdout;
         record.stderr = stderr.len();
         if self.telemetry.hash_stdout {
-            record.stdout_sha256 = Some(crate::report::sha256(stdout));
+            record.stdout_sha256 = digest;
         }
         if self.telemetry.capture_stderr {
             record.diagnostic.clear();

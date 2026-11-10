@@ -45,7 +45,7 @@ impl Entry {
         paths: &[String],
     ) -> Result<Self, Error> {
         let mut hash = Sha256::new();
-        hash.update(b"stdo cache key v2");
+        hash.update(b"stdo cache key v3");
         hash.update((argv.len() as u64).to_be_bytes());
         for argument in argv {
             hash_field(&mut hash, argument.as_bytes());
@@ -242,6 +242,14 @@ async fn hash_executable(hash: &mut Sha256, step: &str, program: &str) -> Result
     hash.update(metadata.len().to_be_bytes());
     hash.update([sign]);
     hash.update(elapsed.as_nanos().to_be_bytes());
+    match hash_contents(&path, &mut vec![0; IO_CHUNK]).await {
+        Ok(digest) => {
+            hash.update([1]);
+            hash.update(digest);
+        }
+        Err(error) if error.kind() == io::ErrorKind::PermissionDenied => hash.update([0]),
+        Err(source) => return Err(dependency(step, &path, source)),
+    }
     Ok(())
 }
 
@@ -281,16 +289,17 @@ async fn hash_file(
             io::Error::new(io::ErrorKind::InvalidInput, "expected a regular file"),
         ));
     }
-    let mut file = File::open(canonical)
+    hash_contents(&canonical, chunk)
         .await
-        .map_err(|source| dependency(step, path, source))?;
+        .map_err(|source| dependency(step, path, source))
+}
+
+async fn hash_contents(path: &Path, chunk: &mut [u8]) -> io::Result<[u8; 32]> {
+    let mut file = File::open(path).await?;
     file.set_max_buf_size(IO_CHUNK);
     let mut hash = Sha256::new();
     loop {
-        let count = file
-            .read(chunk)
-            .await
-            .map_err(|source| dependency(step, path, source))?;
+        let count = file.read(chunk).await?;
         if count == 0 {
             return Ok(hash.finalize().into());
         }
