@@ -3,6 +3,7 @@ mod cache;
 pub(crate) mod events;
 mod jsonl;
 mod ledger;
+mod pipe;
 pub mod runner;
 pub(crate) mod telemetry;
 pub mod template;
@@ -113,11 +114,18 @@ async fn run_workflow(
         .map(|(index, step)| (step.id.as_str(), index))
         .collect();
 
-    for (layer_number, layer) in (1..).zip(&graph.layers) {
-        let _layer_timing = telemetry.map(|report| report.layer(layer_number));
+    let plan = graph.execution_plan(workflow, no_cache);
+    for group in plan.groups {
+        let mut layer_timings = BTreeMap::new();
+        let mut pipes = BTreeMap::<usize, pipe::Outputs>::new();
         let context = context! { inputs => &inputs, steps => &outputs };
         let mut commands = Vec::new();
-        for &index in layer {
+        for (layer_number, index) in group {
+            if let Some(report) = telemetry {
+                layer_timings
+                    .entry(layer_number)
+                    .or_insert_with(|| report.layer(layer_number));
+            }
             let step = &workflow.steps[index];
             if graph.dependencies[index]
                 .iter()
@@ -187,8 +195,12 @@ async fn run_workflow(
                             })
                         })
                         .collect::<Result<Vec<_>, _>>()?;
-                    let input = command_input(command, &context, &outputs, &budget, &step.id)?;
-                    commands.push((index, step.id.as_str(), command, argv, input));
+                    let input = match plan.live_sources[index] {
+                        Some(source) => Some(pipes.entry(source).or_default().connect()),
+                        None => command_input(command, &context, &outputs, &budget, &step.id)?
+                            .map(pipe::Input::Buffered),
+                    };
+                    commands.push((layer_number, index, step.id.as_str(), command, argv, input));
                 }
             }
         }
@@ -196,13 +208,18 @@ async fn run_workflow(
         let (cancel, _) = watch::channel(false);
         let mut tasks = JoinSet::new();
         let mut error = None;
-        for (index, id, command, argv, input) in commands {
+        for (layer_number, index, id, command, argv, input) in commands {
+            let mut outgoing = pipes.remove(&index).unwrap_or_default();
             let mut timing = telemetry.map(|report| report.step(layer_number, index, id));
             if let Some(timer) = &timing {
                 timer.started();
             }
             let entry = (command.cache && !no_cache).then(|| {
-                cache::Entry::new(&argv, command, input.as_deref().map_or(&[], Buffer::bytes))
+                cache::Entry::new(
+                    &argv,
+                    command,
+                    input.as_ref().map_or(&[], pipe::Input::cache_bytes),
+                )
             });
             let format = command.parse_stdout.clone();
             if let Some(entry) = &entry {
@@ -237,7 +254,21 @@ async fn run_workflow(
                                 );
                                 timer.stdout_chunk(value.captured.stdout.bytes());
                             }
-                            outputs.insert(id.to_owned(), TemplateValue::from_object(value));
+                            let budget = budget.clone();
+                            let mut receiver = cancel.subscribe();
+                            let id = id.to_owned();
+                            tasks.spawn(async move {
+                                let _timing = timing;
+                                tokio::select! {
+                                    biased;
+                                    _ = receiver.wait_for(|cancelled| *cancelled) => Ok(None),
+                                    result = async {
+                                        outgoing.forward(value.captured.stdout.bytes(), &budget, &id).await?;
+                                        outgoing.finish().await;
+                                        Ok(Some((id, TemplateValue::from_object(value))))
+                                    } => result,
+                                }
+                            });
                             continue;
                         }
                     }
@@ -271,6 +302,7 @@ async fn run_workflow(
                         receiver,
                         timing.as_mut(),
                         format == Some(StdoutFormat::Jsonl),
+                        &mut outgoing,
                     )
                     .await?
                 else {
@@ -281,6 +313,7 @@ async fn run_workflow(
                     if let Some(entry) = entry {
                         entry.store(&value.captured).await?;
                     }
+                    outgoing.finish().await;
                     Ok(Some((id, TemplateValue::from_object(value))))
                 }
                 .await;

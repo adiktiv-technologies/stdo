@@ -20,11 +20,11 @@ A compact, zero-network Rust binary that orchestrates local CLI tools (`curl`, `
 
 ## Why `stdo`?
 
-Modern AI, data, and automation orchestrators (like Dify, Airflow, or Langflow) suffer from severe infrastructure bloat: they demand multi-container Docker stacks, PostgreSQL, Redis, and lock your logic into fragile Python SDKs that break every month.
+Cron and job tools such as Dagu, Airflow, and Task organize when jobs run and which jobs depend on one another. `stdo` focuses on what flows between running commands. It is a **bounded-memory Unix process dataflow engine** that connects process stdin (`fd 0`) and stdout (`fd 1`) and monitors the bytes in transit.
 
 **`stdo` (pronounced _"studio"_ or _"S-T-D-O"_) takes the radical Unix path:**
 
-1. **Zero HTTP Client Inside:** `stdo` contains no outbound network stack (`no reqwest`, `no openssl`). Need a REST API? Call `curl`. Need a local LLM? Call `ollama` or `llama-cli`. Need vector or relational queries? Call `sqlite3`.
+1. **Zero built-in outbound networking:** The orchestrator binary has no outbound network stack. Commands it starts, such as `curl`, can access the network directly.
 2. **True `stdin` / `stdout` Piping (No `ARG_MAX` Crashes):** Passing megabytes of JSON or RAG context through environment variables (`${OUTPUT}`) crashes the OS kernel (`ARG_MAX` limit) and invites shell-injection bugs. `stdo` streams data directly through process file descriptors (`fd 0` and `fd 1`).
 3. **Content-Addressable Cache:** Deterministic steps can reuse captured output from a previous run.
 4. **Embedded Offline Studio:** Edit the execution graph, configure inputs, and inspect completed runs from a local browser.
@@ -69,9 +69,9 @@ cargo install --path . --locked
 `stdo` supports two complementary data-passing modes between nodes:
 
 - **Buffered Templating (`stdin: "{{ steps.x.stdout }}"`):** Waits for step `x` to complete, then injects its output into a template (ideal for assembling multi-source prompts).
-- **Monitored Pipe (`pipe_from: step_x`):** Captures `step_x`'s stdout in 64 KiB reads and writes those bytes to the downstream command's stdin after the upstream layer finishes. Both stdout and stderr are drained while stdin is being written.
+- **Monitored Pipe (`pipe_from: step_x`):** Forwards stdout in chunks of up to 64 KiB while capturing bounded output. Eligible producers and consumers run concurrently with backpressure. Downstream EOF follows successful producer completion. Buffered template references and unresolved switch branches still wait for their dependencies. A cache-enabled consumer waits for complete stdin to compute its cache key.
 
-Set `parse_stdout: jsonl` to validate each non-empty JSON Lines record as stdout arrives. The runner compacts each record, ignores blank lines, and delivers newline-delimited bytes to `pipe_from` consumers at the existing layer boundary. An invalid record fails the producer with its line number. Templates and switches can use `steps.<id>.json | length` or index a record with `steps.<id>.json[0]`. Try [the JSONL sensor example](examples/06-jsonl-sensor-stream.yaml).
+Set `parse_stdout: jsonl` to validate each non-empty JSON Lines record as stdout arrives. The runner compacts each record, ignores blank lines, and forwards complete records to live `pipe_from` consumers. An invalid record fails the producer with its line number. Templates and switches can use `steps.<id>.json | length` or index a record with `steps.<id>.json[0]`. Try [the JSONL sensor example](examples/06-jsonl-sensor-stream.yaml).
 
 By default, `run` and `doctor` allow up to 64 steps, 16 layers, and 16 steps per layer. Use `--force` to bypass these graph limits. Subprocess streams still have an 8 MiB limit each, with a shared 32 MiB budget for captured data, pipe read buffers, and rendered I/O buffers. On failure, `stdo run` prints the PID and last known status of each direct child it started.
 
@@ -138,16 +138,27 @@ steps:
       "false": approve_release
 
   - id: record_incident
-    cmd: ["sqlite3", "./security_rules.db"]
-    stdin: |
-      INSERT INTO incidents (summary, ts)
-      VALUES ('{{ steps.local_llm_audit.json.summary }}', datetime('now'));
+    pipe_from: local_llm_audit
+    cmd:
+      - sqlite3
+      - "-batch"
+      - "-bail"
+      - "./security_rules.db"
+      - "CREATE TEMP TABLE audit_input(payload TEXT);"
+      - ".mode ascii"
+      - ".import /dev/stdin audit_input"
+      - |
+        INSERT INTO incidents (summary, ts)
+        SELECT json_extract(payload, '$.summary'), datetime('now')
+        FROM audit_input;
 
   - id: approve_release
     cmd: ["echo", "Release approved."]
 
 output: "{{ steps.local_llm_audit.json.summary }}"
 ```
+
+SQLite imports the validated JSON from stdin into a temporary table. ASCII mode uses control-character separators that cannot appear literally in valid JSON. The SQL stays fixed while `json_extract` reads the summary as data.
 
 ### 3. Execute or Inspect Visually
 
@@ -217,6 +228,11 @@ Open [Studio](http://127.0.0.1:8080) in your browser. With no file argument, Stu
 - [x] `stdo bench` A/B/C comparisons with latency percentiles, TTFB, cache hit ratios, and peak monitored buffer usage.
 - [x] Continuous JSONL line-by-line validation and routing for sensor and log pipelines.
 - [x] Offline HTML/JSON execution audits and benchmark reports.
+
+### Phase 4 — Concurrent Streaming & Production Resilience (`v0.4.0`)
+
+- [x] True concurrent producer-consumer streaming across `pipe_from` chains with overlapping upstream execution and downstream TTFB.
+- [ ] Step-level `timeout_ms`, retry with backoff, and hermetic cache dependencies (`cache_files` / `cache_env`).
 
 ## License
 

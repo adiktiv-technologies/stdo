@@ -35,7 +35,7 @@ impl Default for Telemetry {
 #[derive(Default)]
 struct Records {
     finished: Option<Instant>,
-    layers: BTreeMap<usize, Duration>,
+    layers: BTreeMap<usize, (Instant, Instant)>,
     steps: BTreeMap<(usize, usize), Step>,
 }
 
@@ -186,9 +186,9 @@ impl Telemetry {
         let layers = records
             .layers
             .iter()
-            .map(|(layer, duration)| LayerTelemetry {
+            .map(|(layer, (started, finished))| LayerTelemetry {
                 layer: *layer,
-                duration_ms: milliseconds(*duration),
+                duration_ms: milliseconds(finished.duration_since(*started)),
             })
             .collect();
         ExecutionTelemetry {
@@ -212,7 +212,15 @@ impl Telemetry {
 
     pub(super) fn layer(&self, number: usize) -> LayerTimer<'_> {
         if let Some(events) = &self.events {
-            events.emit(EngineEvent::LayerStarted { layer: number });
+            if !self
+                .records
+                .lock()
+                .expect("telemetry lock")
+                .layers
+                .contains_key(&number)
+            {
+                events.emit(EngineEvent::LayerStarted { layer: number });
+            }
         }
         LayerTimer {
             telemetry: self,
@@ -252,8 +260,11 @@ impl Telemetry {
                 "partial; failed"
             }
         );
-        for (layer, duration) in &records.layers {
-            eprintln!("  Layer {layer}: {:.2} ms", milliseconds(*duration));
+        for (layer, (started, finished)) in &records.layers {
+            eprintln!(
+                "  Layer {layer}: {:.2} ms",
+                milliseconds(finished.duration_since(*started))
+            );
             for (_, step) in records.steps.range((*layer, 0)..=(*layer, usize::MAX)) {
                 let ttfb = match step.ttfb {
                     Some(duration) => format!(" | ttfb={:.2} ms", milliseconds(duration)),
@@ -301,12 +312,15 @@ pub(super) struct LayerTimer<'a> {
 
 impl Drop for LayerTimer<'_> {
     fn drop(&mut self) {
+        let finished = Instant::now();
         self.telemetry
             .records
             .lock()
             .expect("telemetry lock")
             .layers
-            .insert(self.number, self.started.elapsed());
+            .entry(self.number)
+            .and_modify(|range| range.1 = finished)
+            .or_insert((self.started, finished));
     }
 }
 

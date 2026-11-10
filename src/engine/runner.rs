@@ -6,7 +6,7 @@ use std::{
 };
 
 use tokio::{
-    io::{AsyncRead, AsyncReadExt, AsyncWriteExt},
+    io::{AsyncRead, AsyncReadExt},
     process::{Child, Command},
     sync::watch,
 };
@@ -17,12 +17,12 @@ use super::{
     budget::{Budget, Buffer},
     jsonl::Collector,
     ledger::ProcessLedger,
+    pipe::{Input, Outputs, CHUNK_SIZE},
     telemetry::{Status, StepTimer},
 };
 
 pub use super::budget::{MAX_STEP_OUTPUT_BYTES, MAX_WORKFLOW_MEMORY_BYTES};
 
-const CHUNK_SIZE: usize = 64 * 1024;
 const FAILURE_DRAIN_TIMEOUT: Duration = Duration::from_millis(100);
 
 pub(super) struct Captured {
@@ -35,7 +35,7 @@ pub(super) struct Running {
     started: Instant,
     child: Child,
     step: String,
-    input: Option<Arc<Buffer>>,
+    input: Option<Input>,
     ignore_exit_code: bool,
     ledger: ProcessLedger,
     entry: usize,
@@ -45,7 +45,7 @@ impl Running {
     pub(super) fn spawn(
         step: &str,
         command: Vec<String>,
-        input: Option<Arc<Buffer>>,
+        input: Option<Input>,
         ignore_exit_code: bool,
         ledger: ProcessLedger,
     ) -> Result<Self, Error> {
@@ -76,10 +76,11 @@ impl Running {
         mut cancel: watch::Receiver<bool>,
         mut timing: Option<&mut StepTimer>,
         parse_jsonl: bool,
+        pipes: &mut Outputs,
     ) -> Result<Option<Captured>, Error> {
         let mut stdout = self.child.stdout.take().expect("stdout is piped");
         let mut stderr = self.child.stderr.take().expect("stderr is piped");
-        let mut stdin = self.child.stdin.take().expect("stdin is piped");
+        let stdin = self.child.stdin.take().expect("stdin is piped");
         let step = &self.step;
         let mut stdout_buffer = budget.buffer();
         let mut stderr_buffer = budget.buffer();
@@ -87,12 +88,12 @@ impl Running {
         let mut first_byte = None;
         let write_input = async move {
             if let Some(input) = self.input {
-                match stdin.write_all(input.bytes()).await {
-                    Err(error) if error.kind() != io::ErrorKind::BrokenPipe => {
-                        return Err(process_error(step, error));
-                    }
-                    _ => {}
-                }
+                input
+                    .write(stdin)
+                    .await
+                    .map_err(|error| process_error(step, error))?;
+            } else {
+                drop(stdin);
             }
             Ok(())
         };
@@ -103,18 +104,25 @@ impl Running {
                 let drain = async {
                     let stdout_read = async {
                         let mut jsonl = parse_jsonl.then(|| Collector::new(&budget, step));
-                        read_pipe(&mut stdout, &budget, step, |bytes| {
+                        let mut chunk = read_buffer(&budget, step)?;
+                        loop {
+                            let bytes = read_chunk(&mut stdout, &mut chunk, step).await?;
+                            if bytes.is_empty() { break; }
                             if let Some(timer) = timing.as_deref() {
                                 first_byte.get_or_insert_with(Instant::now);
                                 timer.stdout_chunk(bytes);
                             }
+                            let start = stdout_buffer.bytes().len();
                             match &mut jsonl {
                                 Some(collector) => collector.push(bytes, &mut stdout_buffer),
                                 None => stdout_buffer.append(bytes, step),
-                            }
-                        }).await?;
+                            }?;
+                            pipes.forward(&stdout_buffer.bytes()[start..], &budget, step).await?;
+                        }
                         if let Some(collector) = jsonl {
+                            let start = stdout_buffer.bytes().len();
                             collector.finish(&mut stdout_buffer)?;
+                            pipes.forward(&stdout_buffer.bytes()[start..], &budget, step).await?;
                         }
                         Ok::<_, Error>(())
                     };
@@ -203,20 +211,34 @@ async fn read_pipe(
     step: &str,
     mut consume: impl FnMut(&[u8]) -> Result<(), Error>,
 ) -> Result<(), Error> {
+    let mut chunk = read_buffer(budget, step)?;
+    loop {
+        let bytes = read_chunk(&mut reader, &mut chunk, step).await?;
+        if bytes.is_empty() {
+            return Ok(());
+        }
+        consume(bytes)?;
+    }
+}
+
+fn read_buffer(budget: &Budget, step: &str) -> Result<Buffer, Error> {
     let mut chunk = budget.buffer();
     chunk
         .resize_zeroed(CHUNK_SIZE)
         .map_err(|source| chunk.stream_error(step, source))?;
-    loop {
-        let count = reader
-            .read(chunk.bytes_mut())
-            .await
-            .map_err(|source| process_error(step, source))?;
-        if count == 0 {
-            return Ok(());
-        }
-        consume(&chunk.bytes()[..count])?;
-    }
+    Ok(chunk)
+}
+
+async fn read_chunk<'a>(
+    reader: &mut (impl AsyncRead + Unpin),
+    chunk: &'a mut Buffer,
+    step: &str,
+) -> Result<&'a [u8], Error> {
+    let count = reader
+        .read(chunk.bytes_mut())
+        .await
+        .map_err(|source| process_error(step, source))?;
+    Ok(&chunk.bytes()[..count])
 }
 
 fn process_error(step: &str, source: io::Error) -> Error {

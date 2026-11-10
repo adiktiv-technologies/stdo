@@ -8,8 +8,8 @@ You are working on **`stdo`** (_Standard I/O Orchestrator_), an ultra-compact, 1
    - NEVER add `reqwest`, `hyper-tls`, `rustls`, `openssl`, `ureq`, or any HTTP client crate to `Cargo.toml`.
    - `stdo` only binds a local TCP listener on `127.0.0.1` for `stdo serve`. All external network calls in user workflows must be delegated to system binaries (e.g., `curl`).
 2. **ZERO External Frontend Assets (100% Air-Gapped UI):**
-   - The `stdo serve` Web UI (`src/ui/`) must work on an air-gapped machine with no internet connection.
-   - NEVER include external `<script src="https://...">`, Google Fonts, Tailwind CDNs, or npm runtime dependencies. Everything must be Vanilla HTML/CSS/JS + inline SVG embedded via `rust-embed`.
+   - The `stdo serve` Web UI (`src/studio/studio.html`) must work on an air-gapped machine.
+   - NEVER include external scripts, fonts, CDNs, or npm runtime dependencies. Use Vanilla HTML/CSS/JS and inline SVG embedded with `include_str!("studio.html")`.
 3. **Strict `stdin` / `stdout` Process Isolation:**
    - Always spawn subprocesses directly via `tokio::process::Command::new(program).args(args)` without invoking a shell (`/bin/sh -c`) unless explicitly requested by the user's command array.
    - Never pass large step outputs via environment variables or CLI arguments (`ARG_MAX` hazard); always route payloads through `Stdio::piped()`.
@@ -20,11 +20,13 @@ You are working on **`stdo`** (_Standard I/O Orchestrator_), an ultra-compact, 1
 ## 2. Project Layout
 
 - `src/main.rs` — CLI entrypoint (`run`, `serve`, `doctor`, `bench`).
-- `src/dag.rs` — `stdo.yaml` schema, topological sorting, and cycle detection.
-- `src/engine.rs` — Subprocess spawner, `minijinja` stdin renderer, `pipe_from` OS descriptor wiring, and `SHA-256` CAS cache.
-- `src/server.rs` — Local `axum` HTTP/WebSocket server (`127.0.0.1:8080`).
-- `src/ui/index.html` — Embedded zero-dependency Studio UI.
-- `examples/` — Reference `.stdo.yaml` workflows (including `dscr` + `.nex` air-gapped pipelines).
+- `src/dag/` — Workflow schema, graph validation, topological layers, and runtime execution groups.
+- `src/engine/` — Subprocess runner, MiniJinja rendering, monitored pipes, JSONL validation, and telemetry.
+- `src/engine/cache.rs` — SHA-256 content-addressable step cache.
+- `src/studio/mod.rs` — Loopback HTTP/SSE server using `tokio::net::TcpListener` (default `127.0.0.1:8080`).
+- `src/studio/studio.html` — Embedded zero-dependency Studio UI.
+- `src/bench.rs` and `src/report.rs` — Benchmark comparisons and atomic offline audit exports.
+- `examples/` — Runnable POSIX workflows, repository audits, and the JSONL sensor pipeline.
 
 ## 3. Verification Commands
 
