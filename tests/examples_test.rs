@@ -420,6 +420,62 @@ esac
 }
 
 #[test]
+fn concurrent_atomic_sinks_publish_one_complete_payload() {
+    let workspace = StubWorkspace::new("concurrent-sink");
+    workspace.stub(
+        "curl",
+        r#"
+case "$5" in
+  https://fixture.invalid/left) printf '[{"id":1},{"id":2}]\n' ;;
+  https://fixture.invalid/right) printf '[{"id":3},{"id":4},{"id":5}]\n' ;;
+  *) exit 1 ;;
+esac
+"#,
+    );
+    workspace.stub(
+        "cat",
+        r#"
+# Each sink has already reserved its sibling file when it invokes cat.
+# Rendezvous before either writer can finish.
+for attempt in 1 2 3 4 5 6 7 8 9 10; do
+  set -- ./shared.jsonl.tmp.*
+  if [ "$#" -eq 2 ]; then
+    : > both-staged
+  fi
+  if [ -f both-staged ]; then
+    exec /bin/cat
+  fi
+  sleep 0.2
+done
+exit 1
+"#,
+    );
+    let run = |url| workspace.success("run", HTTP, &["-i", url, "-i", "output_jsonl=shared.jsonl"]);
+    std::thread::scope(|scope| {
+        let left = scope.spawn(|| run("api_url=https://fixture.invalid/left"));
+        let right = scope.spawn(|| run("api_url=https://fixture.invalid/right"));
+        assert!(left.join().unwrap().contains("2 JSONL record(s)"));
+        assert!(right.join().unwrap().contains("3 JSONL record(s)"));
+    });
+    let output = fs::read_to_string(workspace.0.join("shared.jsonl")).unwrap();
+    assert!(
+        [
+            "{\"id\":1}\n{\"id\":2}\n",
+            "{\"id\":3}\n{\"id\":4}\n{\"id\":5}\n"
+        ]
+        .contains(&output.as_str()),
+        "{output}"
+    );
+    assert!(fs::read_dir(&workspace.0).unwrap().all(|entry| {
+        !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with("shared.jsonl.tmp.")
+    }));
+}
+
+#[test]
 fn jsonl_sensor_stream_filters_and_routes_records() {
     assert_eq!(
         invoke("doctor", SENSOR, &[]),
