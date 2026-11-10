@@ -1,0 +1,57 @@
+version: "1.0"
+name: parallel-repo-audit
+
+inputs:
+  target_dir:
+    type: path
+    default: ./examples
+  keyword:
+    type: string
+    default: "name:"
+
+steps:
+  - id: count_files
+    cmd:
+      - sh
+      - -c
+      - |
+        CDPATH= cd "$1" || exit 2
+        count=0
+        for file in ./*.yaml; do
+          if [ -f "$file" ]; then count=$((count + 1)); fi
+        done
+        printf '%s\n' "$count"
+      - stdo
+      - "{{ inputs.target_dir }}"
+  - id: count_lines
+    cmd:
+      - sh
+      - -c
+      - |
+        CDPATH= cd "$1" || exit 2
+        for file in ./*.yaml; do
+          [ -f "$file" ] && cat "$file"
+        done | wc -l
+      - stdo
+      - "{{ inputs.target_dir }}"
+  - id: find_keyword
+    cmd:
+      - sh
+      - -c
+      - |
+        CDPATH= cd "$1" || exit 2
+        for file in ./*.yaml; do
+          [ -f "$file" ] && cat "$file"
+        done | grep -F -c -e "$2"
+      - stdo
+      - "{{ inputs.target_dir }}"
+      - "{{ inputs.keyword }}"
+    ignore_exit_code: true
+  - id: summarize
+    cmd: [cat]
+    stdin: |
+      YAML files: {{ steps.count_files.stdout | trim }}
+      YAML lines: {{ steps.count_lines.stdout | trim }}
+      Matching lines: {{ steps.find_keyword.stdout | trim }}
+
+output: "{{ steps.summarize.stdout }}"

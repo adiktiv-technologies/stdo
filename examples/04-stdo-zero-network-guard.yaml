@@ -1,0 +1,54 @@
+version: "1.0"
+name: stdo-zero-network-guard
+
+steps:
+  - id: check_forbid_unsafe
+    cmd:
+      - sh
+      - -c
+      - |
+        status=PASS
+        for file in src/lib.rs src/main.rs; do
+          if ! grep -Fxq '#![forbid(unsafe_code)]' "$file"; then status=FAIL; fi
+        done
+        hits=$(find src -type f -name '*.rs' -exec awk '
+          /(^|[^[:alnum:]_])unsafe[[:space:]]/ { print FILENAME; exit }
+        ' {} \;) || exit 2
+        if [ -n "$hits" ]; then status=FAIL; fi
+        printf '%s\n' "$status"
+  - id: check_zero_network_deps
+    cmd:
+      - awk
+      - |
+        BEGIN { banned = "(reqwest|hyper|ureq|openssl|rustls)" }
+        {
+          sub(/[[:space:]]*#.*/, "")
+          if ($0 ~ "^[[:space:]]*\"?" banned "\"?[[:space:]]*=" ||
+              $0 ~ "package[[:space:]]*=[[:space:]]*\"" banned "\"" ||
+              $0 ~ "dependencies[.]\"?" banned "\"?[[:space:]]*\\]") found = 1
+        }
+        END { printf "{\"clean\":%s}\n", found ? "false" : "true" }
+      - Cargo.toml
+    parse_stdout: json
+  - id: stream_rust_files
+    cmd: [find, src, -type, f, -name, '*.rs', -exec, awk, 'END { print NR }', '{}', ';']
+  - id: count_rust_loc
+    cmd: [awk, '{ lines += $1 } END { printf "{\"modules\":%d,\"lines\":%d}\n", NR, lines }']
+    pipe_from: stream_rust_files
+    parse_stdout: json
+  - id: audit_gate
+    type: switch
+    condition: "{{ steps.check_zero_network_deps.json.clean }}"
+    cases:
+      "true": audit_passed
+      "false": audit_failed
+  - id: audit_passed
+    cmd: [echo, PASS]
+  - id: audit_failed
+    cmd: [echo, FAIL]
+
+output: |
+  # Architecture & Safety Self-Audit
+  Unsafe-code guard: {{ steps.check_forbid_unsafe.stdout | trim }}
+  Network dependency guard: {% if steps.check_zero_network_deps.json.clean %}{{ steps.audit_passed.stdout | trim }}{% else %}{{ steps.audit_failed.stdout | trim }}{% endif %}
+  Rust source: {{ steps.count_rust_loc.json.modules }} modules, {{ steps.count_rust_loc.json.lines }} lines

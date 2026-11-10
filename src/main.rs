@@ -33,7 +33,7 @@ async fn main() -> ExitCode {
 async fn dispatch(command: Command, ledger: &ProcessLedger) -> Result<(), Error> {
     match command {
         Command::Doctor { file, force } => {
-            let workflow = Workflow::read(&file)?;
+            let workflow = Workflow::read(file.path())?;
             let graph = doctor::check_with_force(&workflow, force)?;
             println!(
                 "{}: {} steps in {} layers, required executables available",
@@ -43,7 +43,7 @@ async fn dispatch(command: Command, ledger: &ProcessLedger) -> Result<(), Error>
             );
         }
         Command::Run { file, input, force } => {
-            let workflow = Workflow::read(&file)?;
+            let workflow = Workflow::read(file.path())?;
             engine::run(&workflow, &input, force, ledger, &mut std::io::stdout()).await?;
         }
         Command::Serve { .. } => eprintln!("{WIP_NOTICE}"),
