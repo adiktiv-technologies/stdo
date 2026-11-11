@@ -10,8 +10,10 @@ fi
 command -v ollama >/dev/null
 command -v ffmpeg >/dev/null
 mkdir -p assets
+wav=$(mktemp "${TMPDIR:-/tmp}/stdo-pronunciation.XXXXXX")
+trap 'rm -f "$wav"' EXIT
 "$stdo_bin" run -t -f examples/10-youtube-capsule-generator.yaml --no-cache \
-  -i output_wav=assets/stdo-pronunciation.wav \
+  -i "output_wav=$wav" \
   -i output_mp4=assets/stdo-pronunciation.mp4 \
   -i llm_model=gemma4 \
   -i tts_model=phonon:latest \

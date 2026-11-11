@@ -201,7 +201,7 @@ See the [workflow gallery](examples/README.md) for the ETL and release gate exam
 
 ### Stream local speech with Ollama and Phonon
 
-The pronunciation clip linked next to the title ([MP4](assets/stdo-pronunciation.mp4) · [WAV](assets/stdo-pronunciation.wav)) is generated end-to-end by running [examples/10-youtube-capsule-generator.yaml](examples/10-youtube-capsule-generator.yaml) via `scripts/generate-pronunciation-asset.sh` (local Gemma 4 → Phonon TTS → FFmpeg).
+The pronunciation clip linked next to the title ([MP4](assets/stdo-pronunciation.mp4)) is generated end-to-end by running [examples/10-youtube-capsule-generator.yaml](examples/10-youtube-capsule-generator.yaml) via `scripts/generate-pronunciation-asset.sh` (local Gemma 4 → Phonon TTS → FFmpeg).
 
 Gradium’s Phonon family streams speech as it generates it. Ollama’s `phonon:latest` uses the 31M English checkpoint and selects the `default` voice when you omit `--voice`. These commands use the Phonon package for Apple Silicon and Ollama 0.40.9 or later. [Gradium models](https://huggingface.co/gradium) · [Phonon 31M English](https://huggingface.co/gradium/phonon-31m-en) · [Ollama speech guide](https://docs.ollama.com/capabilities/speech)
 

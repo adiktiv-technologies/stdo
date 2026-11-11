@@ -496,14 +496,19 @@ esac
         r#"
 [ "$(wc -c < './voice track.wav' | tr -d ' ')" = 12 ]
 case " $* " in
-  *' -c:a aac -ar 48000 -ac 2 -b:a 192k '*) ;;
+  *' -c:a aac -b:a 192k '*) ;;
   *) exit 1 ;;
 esac
 case " $* " in
-  *' -stream_loop -1 -i ./screen recording.mov '*) printf 'recording\n' >> render-modes ;;
+  *' -stream_loop -1 -i ./screen recording.mov '*)
+    case " $* " in
+      *' -af aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo '*) ;;
+      *) exit 1 ;;
+    esac
+    printf 'recording\n' >> render-modes ;;
   *' color=c=0x0d1117:s=1280x720:r=30 '*)
     case " $* " in
-      *' -filter_complex [1:a]aformat=channel_layouts=mono,compand,showwaves=s=1280x720:mode=cline:rate=30:scale=sqrt:colors=0x38bdf8[fg];[0:v][fg]overlay=format=auto,format=yuv420p[v] -map [v] -map 1:a:0 '*)
+      *' -filter_complex [1:a]asplit=2[a_vis][a_raw];[a_vis]aformat=channel_layouts=mono,compand,showwaves=s=1280x720:mode=cline:rate=30:scale=sqrt:colors=0x38bdf8[fg];[0:v][fg]overlay=format=auto,format=yuv420p[v];[a_raw]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo[a] -map [v] -map [a] '*)
         case " $* " in
           *' -crf 23 -preset veryfast '*) ;;
           *) exit 1 ;;
