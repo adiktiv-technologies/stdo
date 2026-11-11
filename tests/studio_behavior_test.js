@@ -157,7 +157,8 @@ test('catalog tabs filter presets and insert an editable DSCR command',async () 
   }
   assert.equal(dialog.querySelector('.catalog-banner').hidden,false);
   const search=dialog.walk().find(node=>node.type==='search');
-  search.value='safeguard';search.listeners.input();
+  assert.equal(search.cls,'catalog-search');
+  search.value='topological archive';search.listeners.input();
   assert.equal(rows().length,1);
   rows()[0].click();
   await settleCatalog();
@@ -167,8 +168,9 @@ test('catalog tabs filter presets and insert an editable DSCR command',async () 
   await modal;
   assert.equal(state.workflow.steps[0].id,'gate');
   assert.equal(state.workflow.steps[0].name,'Policy gate');
-  assert.equal(state.workflow.steps[0].cmd.join(' '),'dscr filter --capsule ./policy.nex --format json');
+  assert.equal(state.workflow.steps[0].cmd.join(' '),'dscr inspect ./dscr.nex --json');
   assert.equal(state.workflow.steps[0].parse_stdout,'json');
+  assert.equal(state.workflow.steps[0].cache,true);
 });
 
 test('sub-workflow catalog loads files and serializes visual input overrides',async () => {

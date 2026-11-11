@@ -70,8 +70,30 @@ main{display:grid;grid-template-columns:minmax(0,1fr) minmax(320px,29vw);height:
 .dialog-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px;flex-wrap:wrap}
 #studio-dialog h2{margin-top:0}#studio-dialog h3{margin-bottom:6px}
 #studio-dialog table{border-collapse:collapse;font-size:12px}#studio-dialog td,#studio-dialog th{border:1px solid var(--line);padding:7px;text-align:left}
-#studio-dialog:has(.catalog-layout){width:min(1000px,96vw)}
-.catalog-metadata{display:grid;grid-template-columns:1fr 2fr;gap:12px;margin-top:12px}.catalog-tabs{display:flex;flex-wrap:wrap;gap:5px;margin:8px 0 14px}.catalog-tabs button[aria-pressed=true],.catalog-preset[aria-pressed=true]{background:#263c5c;border-color:#58a6ff}.catalog-layout{display:grid;grid-template-columns:minmax(220px,1fr) minmax(260px,1.25fr);gap:18px;min-height:300px}.catalog-list{max-height:45vh;overflow:auto;padding-right:5px}.catalog-preset{display:block;text-align:left;width:100%;margin-bottom:5px}.catalog-preset code{display:block;font-size:11px;color:var(--muted);margin-top:3px}.catalog-detail{min-width:0;max-height:45vh;overflow:auto}.catalog-detail pre{max-height:220px;overflow:auto}.catalog-error{color:var(--error)}.catalog-banner{padding:10px;border-left:2px solid var(--pipe);margin:8px 0 14px;font-size:12px}.catalog-banner a{color:var(--pipe)}.subworkflow-badge{display:flex;align-items:center;justify-content:space-between;gap:6px;padding:6px;font-size:11px;overflow-wrap:anywhere;background:#1d2c46}.subworkflow-badge button{white-space:nowrap;font-size:11px;padding:3px 5px}@media(max-width:650px){.catalog-layout{grid-template-columns:1fr}.catalog-list{max-height:22vh}.catalog-metadata{grid-template-columns:1fr}}
+#studio-dialog[open]:has(.catalog-layout){
+  width:min(1000px,96vw);height:min(760px,85dvh);display:flex;flex-direction:column;
+}
+#studio-dialog .catalog-search{width:100%;box-sizing:border-box;flex:none}
+.catalog-metadata{display:grid;grid-template-columns:1fr 2fr;gap:12px;margin-top:12px}
+.catalog-tabs{display:flex;flex-wrap:wrap;gap:5px;margin:8px 0 14px}
+.catalog-tabs button[aria-pressed=true],.catalog-preset[aria-pressed=true]{background:#263c5c;border-color:#58a6ff}
+.catalog-layout{
+  display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.25fr);gap:18px;
+  flex:1 0 0;min-height:min(360px,40dvh);max-height:420px;overflow:hidden;
+}
+.catalog-list,.catalog-detail{min-width:0;min-height:0;overflow-y:auto}
+.catalog-list{padding-right:5px}
+.catalog-preset{display:block;text-align:left;width:100%;margin-bottom:5px}
+.catalog-preset code{display:block;font-size:11px;color:var(--muted);margin-top:3px}
+.catalog-error{color:var(--error);margin:4px 0;min-height:1.3em}
+.catalog-banner{padding:10px;border-left:2px solid var(--pipe);margin:0 0 10px;font-size:12px}
+.catalog-banner a{color:var(--pipe)}
+.subworkflow-badge{display:flex;align-items:center;justify-content:space-between;gap:6px;padding:6px;font-size:11px;overflow-wrap:anywhere;background:#1d2c46}
+.subworkflow-badge button{white-space:nowrap;font-size:11px;padding:3px 5px}
+@media(max-width:650px){
+  .catalog-layout{grid-template-columns:1fr;grid-template-rows:minmax(0,1fr) minmax(0,1fr)}
+  .catalog-metadata{grid-template-columns:1fr}
+}
 .node .subworkflow-badge{margin:4px 7px;padding:4px 5px}.node .subworkflow-badge span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 </style>
 </head>
@@ -1006,12 +1028,27 @@ function commandPresets() {
     preset('Ollama','LLM Structured JSON (--format json)',['ollama','run','qwen2.5-coder:7b','--format','json','Return a JSON object with a summary.'],{parse_stdout:'json',cache:true}),
     preset('Ollama','Phonon Text-to-Speech WAV Stream',['ollama','run','phonon:latest'],{capture_stdout:false},'Wire text into stdin and a file sink to stdout. WAV bytes stream without retained stdout.'),
     preset('Ollama','List Installed Local Models (ollama list)',['ollama','list']),
-    preset('DSCR','DSCR Instant Safeguard & Pre-Filter (<1ms)',['dscr','filter','--capsule','./policy.nex','--format','json'],{parse_stdout:'json',cache:true},'Route PASS / MONITOR / BLOCK with a downstream Switch Step. Review capsule cache dependencies before using cache.'),
-    preset('DSCR','DSCR Autonomous Signal & Task Router (Zero-LLM)',['dscr','route','--capsule','./routing.nex','--format','json'],{parse_stdout:'json'}),
-    preset('DSCR','DSCR Industrial Noise Filter (JSONL stream)',['dscr','denoise','--capsule','./sensor.nex','--jsonl'],{parse_stdout:'jsonl'}),
-    preset('DSCR','DSCR Model Governance & Compliance Steering (.nex)',['dscr','govern','--capsule','./compliance.nex','--model','gemma4','--format','json'],{parse_stdout:'json'}),
-    preset('DSCR','DSCR Verify Sealed .nex Capsule (Offline Audit)',['dscr','verify','./policy.nex','--json'],{parse_stdout:'json'}),
-    preset('DSCR','DSCR Telemetry & Log Stream Compressor',['dscr','compress','--capsule','./telemetry.nex','--jsonl'],{parse_stdout:'jsonl'}),
+    preset('DSCR', "DSCR Verify .nex Cryptographic Manifest & MACs (dscr verify)",
+      ["dscr","verify","--nex","./dscr.nex"], {},
+      "Verify cryptographic manifest signature, payload MACs, and Layer 0 embedding_sha256 digests of a .nex archive."),
+    preset('DSCR', "DSCR Inspect .nex Topological Archive (dscr inspect --json)",
+      ["dscr","inspect","./dscr.nex","--json"], {"parse_stdout":"json","cache":true},
+      "Parse and validate a .nex topological archive and emit structured JSON metadata."),
+    preset('DSCR', "DSCR Air-Gapped Document & Log Triage (dscr triage)",
+      ["dscr","triage","--nex","./dscr.nex"], {},
+      "Execute air-gapped document and log triage with Markdown section splitting, DLP/WAF quarantine, and domain coalescence."),
+    preset('DSCR', "DSCR Layer 0 .nex-Injected GGUF Inference (dscr run --json)",
+      ["dscr","run","--prompt","Define Slikatomberi","--model","./models/qwen2.5-0.5b-instruct-q4_k_m.gguf","--inject-query","Slikatomberi","--dim","896","--nex","./dscr.nex","--telemetry","--json"], {"parse_stdout":"json"},
+      "Execute local GGUF LLM inference with Layer 0 geometric routing, .nex latent steering (0 system tokens), and JSON telemetry."),
+    preset('DSCR', "DSCR System Diagnostics & Hardware Readiness (dscr doctor --validate --json)",
+      ["dscr","doctor","--validate","--json"], {"parse_stdout":"json"},
+      "Run system diagnostics and hardware readiness checks in JSON format."),
+    preset('DSCR', "DSCR Strict Two-Stage Evaluation Suite (dscr eval --json)",
+      ["dscr","eval","--dim","896","--nex","./dscr.nex","--json"], {"parse_stdout":"json"},
+      "Run DSCR Strict Two-Stage Evaluation Suite (Stage 1 routing + Stage 2 alignment + Stage 3 OOD synthesis)."),
+    preset('DSCR', "DSCR Pack & Sign .nex Archive (dscr pack)",
+      ["dscr","pack","--out","./dist/custom.nex","--client-id","prod","--embed","dim_896=adapters/dscr_checkpoint_896.safetensors","--force"], {},
+      "Compile and sign geometric profiles into an encrypted .nex archive."),
     preset('AWS','AWS S3 List Objects (s3api JSON)',['aws','s3api','list-objects-v2','--bucket','my-bucket','--output','json'],{parse_stdout:'json'}),
     preset('AWS','AWS S3 Stream Object to Stdout',['aws','s3','cp','s3://my-bucket/input.json','-']),
     preset('AWS','AWS S3 Upload from Stdin',['aws','s3','cp','-','s3://my-bucket/output.json'],{pipe_mode:'atomic'}),
@@ -1067,7 +1104,10 @@ async function openCommandCatalog() {
   await modal('Add Command Step',(dialog,finish) => {
     const close = finish;
     let category='All',selected=presets[0],subpath='',inputSchema={},overrides=Object.create(null),loading=false,request=0;
-    const search=element('input');search.placeholder='Filter commands by name, binary, or tag...';search.type='search';search.setAttribute('aria-label','Filter commands by name, binary, or tag');
+    const search = element('input', undefined, 'catalog-search');
+    search.placeholder = 'Filter commands by name, binary, or tag...';
+    search.type = 'search';
+    search.setAttribute('aria-label', 'Filter commands by name, binary, or tag');
     const id=element('input');let number=1;while(currentStep('command_'+number))number++;id.value='command_'+number;
     const name=element('input');name.value=selected.name;
     const metadata=element('div',undefined,'catalog-metadata');metadata.append(field('Step ID',id),field('Step Name',name));
@@ -1120,13 +1160,19 @@ async function openCommandCatalog() {
     }
     function renderList() {
       list.replaceChildren();const matching=presets.filter(preset=>catalogMatches(preset,category,search.value));
+      if (category === 'DSCR') list.append(banner);
       for(const preset of matching){const row=button(preset.name,()=>{selected=preset;renderList();renderDetail();},'catalog-preset');row.setAttribute('aria-pressed',String(preset===selected));row.append(element('code',preset.cmd[0]));list.append(row);}
       if(!matching.length)list.append(element('p','No matching commands.','quiet'));
     }
     for(const label of CATALOG_CATEGORIES){const value=label==='All'?'All':label.slice(label.indexOf(' ')+1);const control=button(label,()=>{category=value;for(const child of tabs.children)child.setAttribute('aria-pressed',String(child===control));banner.hidden=category!=='DSCR';const first=presets.find(preset=>catalogMatches(preset,category,search.value));if(first && !catalogMatches(selected,category,search.value)){selected=first;renderDetail();}renderList();});control.setAttribute('aria-pressed',String(value===category));tabs.append(control);}
-    banner.append(element('span','DSCR — Ultra-lightweight autonomous Edge AI & .nex capsule governance engine (< 1 ms pre-filtering, 100% offline) · '));const link=element('a','nexdatas.com ↗');link.href='https://nexdatas.com';link.target='_blank';link.rel='noopener noreferrer';banner.append(link);banner.hidden=true;
+    banner.append(element('span','DSCR 1.6.13 · Dynamic Semantic Coordinate Routing — Sovereign Layer 0 Runtime · '));
+    const link = element('a','nexdatas.com ↗');
+    link.href = 'https://nexdatas.com';
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    banner.append(link);
     search.addEventListener('input',renderList);id.addEventListener('input',preview);name.addEventListener('input',preview);
-    dialog.append(search,metadata,tabs,banner,layout,error,actions);renderList();
+    dialog.append(search,metadata,tabs,layout,error,actions);renderList();
     // Start after showModal(), so asynchronous responses can check dialog.open.
     queueMicrotask(()=>{renderDetail();search.focus();});
   });
