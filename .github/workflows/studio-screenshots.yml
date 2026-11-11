@@ -1,0 +1,69 @@
+name: Studio screenshots
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      capture: ${{ steps.scope.outputs.capture }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - id: scope
+        env:
+          BRANCH: ${{ github.head_ref || github.ref_name }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          case "${BRANCH,,}" in
+            *serve*|*studio*|*ui*) echo "capture=true" >> "$GITHUB_OUTPUT"; exit 0 ;;
+          esac
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+            echo "capture=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
+            BASE=$(git merge-base "$BASE" "$HEAD")
+          elif [[ "$BASE" =~ ^0+$ ]]; then
+            BASE=$(git merge-base origin/main "$HEAD")
+          fi
+          # Capture conservatively if the previous push commit is unreachable.
+          if ! git diff --quiet "$BASE" "$HEAD" -- src/studio/; then
+            echo "capture=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  studio-screenshots:
+    needs: changes
+    if: needs.changes.outputs.capture == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install FFmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+      - name: Capture Studio
+        run: ./scripts/capture-studio-screenshots.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: studio-screenshots
+          if-no-files-found: error
+          path: |
+            assets/studio-overview-subworkflows.png
+            assets/studio-catalog-dscr.png
+            assets/studio-catalog-subworkflows.png

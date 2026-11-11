@@ -15,7 +15,7 @@ A compact, zero-network Rust binary that orchestrates local CLI tools (`curl`, `
 
 </div>
 
-![stdo Studio showing a LOW-severity release gate with three DAG layers and run telemetry](https://raw.githubusercontent.com/adiktiv-technologies/stdo/main/assets/studio-preview.svg)
+![stdo Studio showing two sub-workflows, their combined report step, and the Requirements inspector](https://raw.githubusercontent.com/adiktiv-technologies/stdo/main/assets/studio-overview-subworkflows.png)
 
 > [!NOTE]
 > Phases 1 through 5 are complete. See the Crates.io badge above for the current version and the [changelog](CHANGELOG.md) for release details.
@@ -301,6 +301,12 @@ In a separate live Apple Silicon run, Gemma 4 answered the prompt in 15.8 s and 
 ## Embedded Studio (`stdo serve`)
 
 Studio is an offline workflow editor for wiring DAG steps, editing YAML, and inspecting runs in your browser.
+
+| Add Command Step — 🛡️ DSCR (Sovereign Layer 0 Runtime) | Add Command Step — 🔗 Sub-Workflow (.yaml) Composition |
+| --- | --- |
+| ![DSCR 1.6.13 presets and command preview](https://raw.githubusercontent.com/adiktiv-technologies/stdo/main/assets/studio-catalog-dscr.png) | ![Sub-workflow file picker, input overrides, and command preview](https://raw.githubusercontent.com/adiktiv-technologies/stdo/main/assets/studio-catalog-subworkflows.png) |
+
+Run `./scripts/capture-studio-screenshots.sh` from the checkout to refresh the three screenshots with Cargo, Node.js 22+, npm, and FFmpeg. The script installs pinned Playwright Chromium and captures the live UI. GitHub Actions uploads fresh screenshots when a branch name contains `serve`, `studio`, or `ui`, or a change touches `src/studio/`.
 
 ```sh
 stdo serve -f examples/03-release-gate-switch.yaml --port 8080
