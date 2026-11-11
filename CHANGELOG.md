@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.4](https://github.com/adiktiv-technologies/stdo/compare/v0.5.3...v0.5.4) - 2026-11-11
+
+### Added
+
+- *(studio,doctor,examples)* add tabbed Command Step catalog (DSCR, AWS, GCP, Ollama) and composable YAML sub-workflows ([#32](https://github.com/adiktiv-technologies/stdo/pull/32))
+
+### Fixed
+
+- *(studio,readme)* keep Studio toolbar on one row, fit Requirements table, and drop completed Roadmap ([#35](https://github.com/adiktiv-technologies/stdo/pull/35))
+
+### Other
+
+- *(studio,ci)* add automated Studio & DSCR catalog screenshots on serve/studio branches ([#34](https://github.com/adiktiv-technologies/stdo/pull/34))
+
 ## [0.5.3](https://github.com/adiktiv-technologies/stdo/compare/v0.5.2...v0.5.3) - 2026-11-11
 
 ### Added
