@@ -1,6 +1,6 @@
 <div align="center">
 
-# ⚡ `stdo` <sup><a href="assets/stdo-pronunciation.mp4" title="Hear how stdo is pronounced">🔊</a></sup>
+# ⚡ `stdo` <sup><a href="https://cdn.jsdelivr.net/gh/adiktiv-technologies/stdo@main/assets/stdo-pronunciation.mp4" title="Hear how stdo is pronounced">🔊</a></sup>
 
 **Standard I/O Orchestrator — Workflow-as-Code meets the Unix Philosophy.**
 
@@ -24,7 +24,7 @@ A compact, zero-network Rust binary that orchestrates local CLI tools (`curl`, `
 
 Cron and job tools such as Dagu, Airflow, and Task organize when jobs run and which jobs depend on one another. `stdo` focuses on what flows between running commands. It is a **bounded-memory Unix process dataflow engine** that connects process stdin (`fd 0`) and stdout (`fd 1`) and monitors the bytes in transit.
 
-**stdo** *(pronounced "studio" or "S-T-D-O" [🔊](assets/stdo-pronunciation.mp4))* takes the radical Unix path:
+**stdo** *(pronounced "studio" or "S-T-D-O" [🔊](https://cdn.jsdelivr.net/gh/adiktiv-technologies/stdo@main/assets/stdo-pronunciation.mp4))* takes the radical Unix path:
 
 1. **Zero built-in outbound networking:** The orchestrator binary has no outbound network stack. Commands it starts, such as `curl`, can access the network directly.
 2. **True `stdin` / `stdout` Piping (No `ARG_MAX` Crashes):** Passing megabytes of JSON or RAG context through environment variables (`${OUTPUT}`) crashes the OS kernel (`ARG_MAX` limit) and invites shell-injection bugs. `stdo` streams data directly through process file descriptors (`fd 0` and `fd 1`).
@@ -201,7 +201,7 @@ See the [workflow gallery](examples/README.md) for the ETL and release gate exam
 
 ### Stream local speech with Ollama and Phonon
 
-The pronunciation clip linked next to the title ([MP4](assets/stdo-pronunciation.mp4)) is generated end-to-end by running [examples/10-youtube-capsule-generator.yaml](examples/10-youtube-capsule-generator.yaml) via `scripts/generate-pronunciation-asset.sh` (local Gemma 4 → Phonon TTS → FFmpeg).
+The pronunciation clip linked next to the title ([MP4](https://cdn.jsdelivr.net/gh/adiktiv-technologies/stdo@main/assets/stdo-pronunciation.mp4)) is generated end-to-end by running [examples/10-youtube-capsule-generator.yaml](examples/10-youtube-capsule-generator.yaml) via `scripts/generate-pronunciation-asset.sh` (local Gemma 4 → Phonon TTS → FFmpeg).
 
 Gradium’s Phonon family streams speech as it generates it. Ollama’s `phonon:latest` uses the 31M English checkpoint and selects the `default` voice when you omit `--voice`. These commands use the Phonon package for Apple Silicon and Ollama 0.40.9 or later. [Gradium models](https://huggingface.co/gradium) · [Phonon 31M English](https://huggingface.co/gradium/phonon-31m-en) · [Ollama speech guide](https://docs.ollama.com/capabilities/speech)
 
