@@ -164,22 +164,41 @@ impl Studio {
         match (request.method.as_str(), target) {
             ("GET", "/") => Ok(Response::html(HTML)),
             ("GET", "/api/workflows") => self.list().await,
+            ("GET", "/api/files") => self.workspace_files().await,
             ("GET", "/api/doctor") => {
-                let (workflow, _) = self.load(&http::query_path(query)?).await?;
-                Ok(Response::json(requirements::summary(&workflow, &[])))
+                let relative = http::query_path(query)?;
+                let (workflow, _) = self.load(&relative).await?;
+                Ok(Response::json(requirements::recursive(
+                    &workflow,
+                    &[],
+                    &self.root,
+                    Some(&self.root.join(relative)),
+                )))
             }
             ("POST", "/api/doctor") => {
                 let request: Run = decode(&request.body)?;
+                let source = request
+                    .draft
+                    .path
+                    .as_deref()
+                    .map(|path| self.root.join(path));
                 let workflow = self.run_workflow(request.draft).await?;
-                Ok(Response::json(requirements::summary(
+                Ok(Response::json(requirements::recursive(
                     &workflow,
                     &request.inputs,
+                    &self.root,
+                    source.as_deref(),
                 )))
             }
             ("GET", "/api/workflow") => {
                 let relative = http::query_path(query)?;
                 let (workflow, yaml) = self.load(&relative).await?;
-                Ok(inspect(&workflow, yaml))
+                Ok(inspect(
+                    &workflow,
+                    yaml,
+                    &self.root,
+                    Some(&self.root.join(relative)),
+                ))
             }
             ("GET", "/api/workflow/meta") => {
                 let relative = http::query_path(query)?;
@@ -187,8 +206,10 @@ impl Studio {
                 Ok(Response::json(json!({"sha256": sha256(&bytes)})))
             }
             ("POST", "/api/preview") => {
-                let (workflow, yaml) = decode::<Draft>(&request.body)?.parse()?;
-                Ok(inspect(&workflow, yaml))
+                let draft: Draft = decode(&request.body)?;
+                let source = draft.path.as_ref().map(|path| self.root.join(path));
+                let (workflow, yaml) = draft.parse()?;
+                Ok(inspect(&workflow, yaml, &self.root, source.as_deref()))
             }
             ("POST", "/api/workflow" | "/api/file") => {
                 let mut draft = decode::<Draft>(&request.body)?;
@@ -203,7 +224,7 @@ impl Studio {
                 atomic_file::write(&path, yaml.as_bytes(), 0o666)
                     .await
                     .map_err(Problem::io)?;
-                Ok(inspect(&workflow, yaml))
+                Ok(inspect(&workflow, yaml, &self.root, Some(&path)))
             }
             ("DELETE", "/api/workflow") => {
                 let path = self.path(&http::query_path(query)?).await?;
@@ -213,14 +234,50 @@ impl Studio {
             ("POST", "/api/run") => self.run(decode(&request.body)?).await,
             (
                 _,
-                "/" | "/api/workflows" | "/api/workflow" | "/api/workflow/meta" | "/api/preview"
-                | "/api/run" | "/api/run/stream" | "/api/artifact" | "/api/doctor" | "/api/file",
+                "/" | "/api/files" | "/api/workflows" | "/api/workflow" | "/api/workflow/meta"
+                | "/api/preview" | "/api/run" | "/api/run/stream" | "/api/artifact" | "/api/doctor"
+                | "/api/file",
             ) => Err(Problem::new(
                 "405 Method Not Allowed",
                 "Method not allowed for this endpoint",
             )),
             _ => Err(Problem::new("404 Not Found", "Unknown Studio endpoint")),
         }
+    }
+
+    async fn workspace_files(&self) -> Result<Response, Problem> {
+        let mut pending = vec![self.root.clone()];
+        let mut workflows = Vec::new();
+        let mut visited = 0;
+        while let Some(directory) = pending.pop() {
+            let mut entries = fs::read_dir(directory).await.map_err(Problem::io)?;
+            while let Some(entry) = entries.next_entry().await.map_err(Problem::io)? {
+                visited += 1;
+                if visited > 10_000 {
+                    return Err(Problem::bad(
+                        "Too many workspace files to browse (limit: 10,000 entries)",
+                    ));
+                }
+                let kind = entry.file_type().await.map_err(Problem::io)?;
+                let path = entry.path();
+                let name = entry.file_name();
+                if kind.is_dir()
+                    && name != "target"
+                    && name != "node_modules"
+                    && !name.to_string_lossy().starts_with('.')
+                {
+                    pending.push(path);
+                } else if kind.is_file() && yaml_path(&path) {
+                    if let Ok(relative) = path.strip_prefix(&self.root) {
+                        if let Some(relative) = relative.to_str() {
+                            workflows.push(relative.to_owned());
+                        }
+                    }
+                }
+            }
+        }
+        workflows.sort_unstable();
+        Ok(Response::json(json!({"workflows": workflows})))
     }
 
     async fn list(&self) -> Result<Response, Problem> {
@@ -452,18 +509,20 @@ fn canonical(workflow: &Workflow) -> Result<String, Problem> {
     Ok(yaml)
 }
 
-fn inspect(workflow: &Workflow, yaml: String) -> Response {
+fn inspect(workflow: &Workflow, yaml: String, root: &Path, source: Option<&Path>) -> Response {
     let (layers, graph_error) = match Graph::build(workflow) {
         Ok(graph) => (graph.layers, None),
         Err(error) => (Vec::new(), Some(error.to_string())),
     };
-    let doctor_error = graph_error
-        .clone()
-        .or_else(|| doctor::check(workflow).err().map(|error| error.to_string()));
+    let doctor_error = graph_error.clone().or_else(|| {
+        doctor::check_in_workspace(workflow, root, source, &[], false)
+            .err()
+            .map(|error| error.to_string())
+    });
     Response::json(json!({
         "workflow": workflow, "sha256": sha256(yaml.as_bytes()), "yaml": yaml, "layers": layers, "graph_error": graph_error,
         "doctor": {"ok": doctor_error.is_none(), "error": doctor_error},
-        "requirements": requirements::summary(workflow,&[])
+        "requirements": requirements::recursive(workflow,&[],root,source)
     }))
 }
 
@@ -471,6 +530,48 @@ fn inspect(workflow: &Workflow, yaml: String) -> Response {
 mod tests {
     use super::*;
     use tokio::io::AsyncWriteExt;
+
+    #[tokio::test]
+    async fn lists_nested_files_and_merges_child_requirements() {
+        struct Fixture(PathBuf);
+        impl Drop for Fixture {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let root = Fixture(
+            std::env::temp_dir().join(format!("stdo-studio-subworkflows-{}", std::process::id())),
+        );
+        fs::create_dir(&root.0).await.unwrap();
+        fs::create_dir(root.0.join("nested")).await.unwrap();
+        fs::write(root.0.join("parent.yaml"), "version: '1.0'\nname: parent\nsteps:\n  - id: child\n    cmd: [stdo, run, -f, nested/child.yaml, -i, llm_model=chosen]\n").await.unwrap();
+        fs::write(root.0.join("nested/child.yaml"), "version: '1.0'\nname: child\ninputs:\n  llm_model: {type: string, default: gemma4}\nsteps:\n  - id: prompt\n    cmd: [ollama, run, '{{ inputs.llm_model }}', hello]\n  - id: gate\n    cmd: [dscr, filter]\n").await.unwrap();
+        let studio = Studio {
+            root: fs::canonicalize(&root.0).await.unwrap(),
+            initial: None,
+            runs: Semaphore::new(1),
+            artifacts: artifact::Store::default(),
+        };
+        let get = |path: &str| format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1:8080\r\n\r\n");
+        let (headers, body) = exchange(&studio, get("/api/files")).await;
+        assert!(headers.starts_with("HTTP/1.1 200 OK"));
+        let files: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(
+            files["workflows"],
+            json!(["nested/child.yaml", "parent.yaml"])
+        );
+        let (headers, body) = exchange(&studio, get("/api/doctor?path=parent.yaml")).await;
+        assert!(headers.starts_with("HTTP/1.1 200 OK"));
+        let requirements: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(requirements["models"], json!(["chosen"]));
+        assert_eq!(requirements["subworkflows"], json!(["nested/child.yaml"]));
+        assert!(requirements["binaries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|binary| binary["name"] == "dscr"
+                && binary["sources"] == json!(["sub-workflow (nested/child.yaml)"])));
+    }
 
     async fn exchange(studio: &Studio, request: String) -> (String, String) {
         let (headers, body) = exchange_bytes(studio, request).await;

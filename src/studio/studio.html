@@ -70,6 +70,31 @@ main{display:grid;grid-template-columns:minmax(0,1fr) minmax(320px,29vw);height:
 .dialog-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px;flex-wrap:wrap}
 #studio-dialog h2{margin-top:0}#studio-dialog h3{margin-bottom:6px}
 #studio-dialog table{border-collapse:collapse;font-size:12px}#studio-dialog td,#studio-dialog th{border:1px solid var(--line);padding:7px;text-align:left}
+#studio-dialog[open]:has(.catalog-layout){
+  width:min(1000px,96vw);height:min(760px,85dvh);display:flex;flex-direction:column;
+}
+#studio-dialog .catalog-search{width:100%;box-sizing:border-box;flex:none}
+.catalog-metadata{display:grid;grid-template-columns:1fr 2fr;gap:12px;margin-top:12px}
+.catalog-tabs{display:flex;flex-wrap:wrap;gap:5px;margin:8px 0 14px}
+.catalog-tabs button[aria-pressed=true],.catalog-preset[aria-pressed=true]{background:#263c5c;border-color:#58a6ff}
+.catalog-layout{
+  display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.25fr);gap:18px;
+  flex:1 0 0;min-height:min(360px,40dvh);max-height:420px;overflow:hidden;
+}
+.catalog-list,.catalog-detail{min-width:0;min-height:0;overflow-y:auto}
+.catalog-list{padding-right:5px}
+.catalog-preset{display:block;text-align:left;width:100%;margin-bottom:5px}
+.catalog-preset code{display:block;font-size:11px;color:var(--muted);margin-top:3px}
+.catalog-error{color:var(--error);margin:4px 0;min-height:1.3em}
+.catalog-banner{padding:10px;border-left:2px solid var(--pipe);margin:0 0 10px;font-size:12px}
+.catalog-banner a{color:var(--pipe)}
+.subworkflow-badge{display:flex;align-items:center;justify-content:space-between;gap:6px;padding:6px;font-size:11px;overflow-wrap:anywhere;background:#1d2c46}
+.subworkflow-badge button{white-space:nowrap;font-size:11px;padding:3px 5px}
+@media(max-width:650px){
+  .catalog-layout{grid-template-columns:1fr;grid-template-rows:minmax(0,1fr) minmax(0,1fr)}
+  .catalog-metadata{grid-template-columns:1fr}
+}
+.node .subworkflow-badge{margin:4px 7px;padding:4px 5px}.node .subworkflow-badge span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 </style>
 </head>
 <body>
@@ -182,7 +207,7 @@ async function api(path, method = 'GET', body) {
 }
 const fileUrl = path => '/api/workflow?path=' + encodeURIComponent(path);
 const empty = () => ({version:'1.0',name:'Untitled workflow',inputs:{},steps:[]});
-const payload = () => state.raw ? {yaml:$('yaml').value} : {workflow:state.workflow};
+const payload = () => ({path:state.path || null,...(state.raw ? {yaml:$('yaml').value} : {workflow:state.workflow})});
 
 function refreshFiles() {
   $('files').replaceChildren();
@@ -373,7 +398,8 @@ function render(redrawEditor = true) {
     header.append(element('span', isSwitch ? '◇' : '▸', 'kind'), element('strong', step.id));
     header.append(button('Edit', () => selectStep(step.id)));
     header.addEventListener('pointerdown', event => startDrag(event, step, card));
-    card.append(header, element('div', isSwitch ? step.condition || 'Set a condition' : (step.cmd || []).join(' '), 'summary'));
+    const sub = subworkflowBadge(step);
+    card.append(header, sub || element('div', isSwitch ? step.condition || 'Set a condition' : (step.cmd || []).join(' '), 'summary'));
     updateBadge(card, state.results.get(step.id));
     for (const direction of ['in','out']) {
       const port = element('button', '', 'port ' + direction);
@@ -877,6 +903,7 @@ function renderEditor() {
         value && typeof value === 'object' && !Array.isArray(value) && Object.values(value).every(target => typeof target === 'string'),
         value => change('cases',value)));
     } else {
+      const sub = subworkflowBadge(step); if (sub) pane.append(sub);
       pane.append(commandBuilder(step));
       pane.append(textField('Stdin template',step.stdin,value => {
         step.stdin = value || null;
@@ -974,6 +1001,183 @@ function renderOverrides() {
     pane.append(group);
   }
 }
+const CATALOG_CATEGORIES = ['All','🔗 Sub-Workflows','⚡ Basics','📄 Files & Data','🌐 HTTP & API','🤖 Ollama','🛡️ DSCR','☁️ AWS','🌐 GCP','🎬 Media'];
+function commandPresets() {
+  const preset = (category,name,cmd,options={},description='') => ({category,name,cmd,options,description});
+  const shell = script => ['sh','-c',script,'stdo','output.txt'];
+  const atomicSink = 'set -eu\ntarget=$1\ncase "$target" in /*) ;; *) target=./$target ;; esac\ntmp="$target.tmp.$"\numask 077\n(set -C; : > "$tmp")\ntrap \'rm -f "$tmp"\' 0\ntrap \'exit 1\' HUP INT TERM\ncat > "$tmp"\n[ ! -d "$target" ]\nmv -f "$tmp" "$target"';
+  return [
+    preset('Sub-Workflows','Run Sub-Workflow (.yaml)',['stdo','run','-f',''],{},'Compose a saved workflow with visual input overrides. Paths use the workspace working directory.'),
+    preset('Basics','Blank Command (echo)',['echo','Hello from stdo']),
+    preset('Basics','POSIX Shell Script (sh -c)',['sh','-c','echo "Hello from a shell script"','stdo']),
+    preset('Basics','Search Code / Text (rg --json)',['rg','--json','TODO','src'],{ignore_exit_code:true,parse_stdout:'jsonl'}),
+    preset('Basics','Count Lines / Bytes (wc -c)',['wc','-c']),
+    preset('Basics','Sort & Deduplicate Lines (sort -u)',['sort','-u']),
+    preset('Basics','System & Environment Info (uname -a)',['uname','-a']),
+    preset('Files & Data','Read File (cat)',['cat','README.md']),
+    preset('Files & Data','Write File Atomically (POSIX temp + mv -f)',shell(atomicSink),{pipe_mode:'atomic'},'Wire a producer to stdin. $1 is the destination; rename publishes only a complete staged file.'),
+    preset('Files & Data','Read / Query JSON (jq)',['jq','.'],{parse_stdout:'json'}),
+    preset('Files & Data','Stream JSONL Records (jq -c .[])',['jq','-c','.[]'],{parse_stdout:'jsonl'}),
+    preset('Files & Data','Convert JSON Array to CSV (jq -r @csv)',['jq','-r','.[] | @csv']),
+    preset('Files & Data','SQLite JSON Query (sqlite3 -json)',['sqlite3','-json','data.db','SELECT 1 AS value;'],{parse_stdout:'json'}),
+    preset('Files & Data','SQLite Atomic Stdin Import (sqlite3 -bail)',['sqlite3','-bail','data.db'],{pipe_mode:'atomic'},'Wire trusted SQL from an upstream step. Atomic piping gates start on producer success; database transaction semantics remain SQL-controlled.'),
+    preset('HTTP & API','Fetch JSON API (curl GET)',['curl','-fsSL','https://api.example.com/data'],{parse_stdout:'json',retry:{attempts:3,backoff_ms:500},timeout_ms:10000}),
+    preset('HTTP & API','POST JSON from Stdin (curl -d @-)',['curl','-fsSL','-H','Content-Type: application/json','-d','@-','https://api.example.com/data']),
+    preset('HTTP & API','Download File Atomically (curl -fsSL -o)',shell(atomicSink.replace('cat > "$tmp"','curl -fsSL -o "$tmp" "https://example.com/file"')),{},'Edit the URL in the script and the output path in $1.'),
+    preset('Ollama','Gemma 4 Prompt (Text)',['ollama','run','gemma4','--hidethinking','Explain Unix pipes in two sentences.'],{cache:true,timeout_ms:60000}),
+    preset('Ollama','LLM Structured JSON (--format json)',['ollama','run','qwen2.5-coder:7b','--format','json','Return a JSON object with a summary.'],{parse_stdout:'json',cache:true}),
+    preset('Ollama','Phonon Text-to-Speech WAV Stream',['ollama','run','phonon:latest'],{capture_stdout:false},'Wire text into stdin and a file sink to stdout. WAV bytes stream without retained stdout.'),
+    preset('Ollama','List Installed Local Models (ollama list)',['ollama','list']),
+    preset('DSCR', "DSCR Verify .nex Cryptographic Manifest & MACs (dscr verify)",
+      ["dscr","verify","--nex","./dscr.nex"], {},
+      "Verify cryptographic manifest signature, payload MACs, and Layer 0 embedding_sha256 digests of a .nex archive."),
+    preset('DSCR', "DSCR Inspect .nex Topological Archive (dscr inspect --json)",
+      ["dscr","inspect","./dscr.nex","--json"], {"parse_stdout":"json","cache":true},
+      "Parse and validate a .nex topological archive and emit structured JSON metadata."),
+    preset('DSCR', "DSCR Air-Gapped Document & Log Triage (dscr triage)",
+      ["dscr","triage","--nex","./dscr.nex"], {},
+      "Execute air-gapped document and log triage with Markdown section splitting, DLP/WAF quarantine, and domain coalescence."),
+    preset('DSCR', "DSCR Layer 0 .nex-Injected GGUF Inference (dscr run --json)",
+      ["dscr","run","--prompt","Define Slikatomberi","--model","./models/qwen2.5-0.5b-instruct-q4_k_m.gguf","--inject-query","Slikatomberi","--dim","896","--nex","./dscr.nex","--telemetry","--json"], {"parse_stdout":"json"},
+      "Execute local GGUF LLM inference with Layer 0 geometric routing, .nex latent steering (0 system tokens), and JSON telemetry."),
+    preset('DSCR', "DSCR System Diagnostics & Hardware Readiness (dscr doctor --validate --json)",
+      ["dscr","doctor","--validate","--json"], {"parse_stdout":"json"},
+      "Run system diagnostics and hardware readiness checks in JSON format."),
+    preset('DSCR', "DSCR Strict Two-Stage Evaluation Suite (dscr eval --json)",
+      ["dscr","eval","--dim","896","--nex","./dscr.nex","--json"], {"parse_stdout":"json"},
+      "Run DSCR Strict Two-Stage Evaluation Suite (Stage 1 routing + Stage 2 alignment + Stage 3 OOD synthesis)."),
+    preset('DSCR', "DSCR Pack & Sign .nex Archive (dscr pack)",
+      ["dscr","pack","--out","./dist/custom.nex","--client-id","prod","--embed","dim_896=adapters/dscr_checkpoint_896.safetensors","--force"], {},
+      "Compile and sign geometric profiles into an encrypted .nex archive."),
+    preset('AWS','AWS S3 List Objects (s3api JSON)',['aws','s3api','list-objects-v2','--bucket','my-bucket','--output','json'],{parse_stdout:'json'}),
+    preset('AWS','AWS S3 Stream Object to Stdout',['aws','s3','cp','s3://my-bucket/input.json','-']),
+    preset('AWS','AWS S3 Upload from Stdin',['aws','s3','cp','-','s3://my-bucket/output.json'],{pipe_mode:'atomic'}),
+    preset('AWS','AWS STS Caller Identity',['aws','sts','get-caller-identity','--output','json'],{parse_stdout:'json'}),
+    preset('AWS','AWS Lambda Invoke to Stdout',['aws','lambda','invoke','--function-name','my-function','/dev/stdout'],{},'The AWS CLI also prints invocation metadata. Adjust the output path or downstream parsing for your function.'),
+    preset('GCP','GCP Cloud Storage Cat Object (gcloud storage cat)',['gcloud','storage','cat','gs://my-bucket/data.jsonl']),
+    preset('GCP','GCP BigQuery SQL Query (bq JSON)',['bq','query','--use_legacy_sql=false','--format=json','SELECT 1'],{parse_stdout:'json'}),
+    preset('GCP','GCP Cloud Logging Read (gcloud logging read)',['gcloud','logging','read','severity>=ERROR','--limit=20','--format=json'],{parse_stdout:'json'}),
+    preset('GCP','GCP Cloud Run Services List',['gcloud','run','services','list','--format=json'],{parse_stdout:'json'}),
+    preset('Media','FFmpeg Animated Waveform MP4',['sh','-c',`set -eu
+out=$2
+tmp="$out.tmp.$.mp4"
+(set -C; : > "$tmp")
+trap 'rm -f "$tmp"' 0
+trap 'exit 1' HUP INT TERM
+ffmpeg -nostdin -hide_banner -loglevel error -y -f lavfi -i 'color=c=0x0d1117:s=640x360:r=24' -i "$1" -filter_complex '[1:a]asplit=2[a_vis][a_raw];[a_vis]aformat=channel_layouts=mono,compand,showwaves=s=640x360:mode=cline:rate=24:scale=sqrt:colors=0x38bdf8[fg];[0:v][fg]overlay=format=auto,format=yuv420p[v];[a_raw]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo[a]' -map '[v]' -map '[a]' -c:v libx264 -tune animation -crf 28 -preset veryslow -maxrate 120k -bufsize 240k -pix_fmt yuv420p -c:a aac -b:a 64k -shortest -movflags +faststart "$tmp"
+[ ! -d "$out" ]
+mv -f "$tmp" "$out"`,'stdo','voice.wav','waveform.mp4']),
+    preset('Media','FFmpeg Mux Video + WAV Audio',['ffmpeg','-nostdin','-i','video.mp4','-i','voice.wav','-map','0:v:0','-map','1:a:0','-c:v','copy','-c:a','aac','-ar','48000','-ac','2','-b:a','192k','-shortest','-movflags','+faststart','output.mp4']),
+    preset('Media','FFprobe Media Stream Inspector (JSON)',['ffprobe','-v','error','-show_format','-show_streams','-of','json','video.mp4'],{parse_stdout:'json'}),
+  ];
+}
+function catalogMatches(preset,category,query) {
+  return (category === 'All' || preset.category === category) &&
+    (preset.name+' '+preset.category+' '+preset.cmd.join(' ')+' '+preset.description).toLowerCase().includes(query.trim().toLowerCase());
+}
+function subworkflowPath(step) {
+  const args = step.cmd || [];
+  if (!/(^|\/)stdo$/.test(args[0] || '') || args[1] !== 'run') return null;
+  for (let i=2;i<args.length;i++) {
+    if (args[i] === '-f' || args[i] === '--file') return args[i+1] || null;
+    if (args[i].startsWith('--file=')) return args[i].slice(7) || null;
+  }
+  return null;
+}
+function subworkflowBadge(step) {
+  const path = subworkflowPath(step);
+  if (!path) return null;
+  const group = element('div',undefined,'subworkflow-badge');
+  const label = element('span','🔗 Sub-workflow: '+path); label.title=label.textContent;
+  group.append(label,button('Open ↗',() => switchFile(path)));
+  return group;
+}
+function makeCatalogStep(preset,id,name,subpath,overrides) {
+  const cmd = preset.category === 'Sub-Workflows'
+    ? ['stdo','run','-f',subpath,...Object.entries(overrides).flatMap(([key,value])=>['-i',key+'='+value])]
+    : [...preset.cmd];
+  return {id,...(name ? {name} : {}),cmd,...JSON.parse(JSON.stringify(preset.options))};
+}
+async function openCommandCatalog() {
+  if (!editAllowed()) return;
+  const presets = commandPresets();
+  await modal('Add Command Step',(dialog,finish) => {
+    const close = finish;
+    let category='All',selected=presets[0],subpath='',inputSchema={},overrides=Object.create(null),loading=false,request=0;
+    const search = element('input', undefined, 'catalog-search');
+    search.placeholder = 'Filter commands by name, binary, or tag...';
+    search.type = 'search';
+    search.setAttribute('aria-label', 'Filter commands by name, binary, or tag');
+    const id=element('input');let number=1;while(currentStep('command_'+number))number++;id.value='command_'+number;
+    const name=element('input');name.value=selected.name;
+    const metadata=element('div',undefined,'catalog-metadata');metadata.append(field('Step ID',id),field('Step Name',name));
+    const tabs=element('nav',undefined,'catalog-tabs');tabs.setAttribute('aria-label','Command categories');
+    const banner=element('div',undefined,'catalog-banner');
+    const layout=element('div',undefined,'catalog-layout');const list=element('div',undefined,'catalog-list');const detail=element('div',undefined,'catalog-detail');layout.append(list,detail);
+    const error=element('p','','catalog-error');error.setAttribute('role','alert');
+    const add=button('Add Command Step',() => {
+      if (!id.value.trim() || currentStep(id.value.trim())) {error.textContent='Choose a unique Step ID.';return;}
+      if (selected.category==='Sub-Workflows' && (loading || !subpath)) {error.textContent='Choose a workflow first.';return;}
+      for (const [key,input] of Object.entries(inputSchema)) {
+        if (input.default == null && !Object.hasOwn(overrides,key)) {error.textContent='Provide required input '+key+'.';return;}
+      }
+      const step=makeCatalogStep(selected,id.value.trim(),name.value.trim(),subpath,overrides);
+      state.workflow.steps.push(step);state.selected=step.id;tab('edit');changed();close(true);
+    },'primary');
+    const actions=element('div',undefined,'dialog-actions');actions.append(button('Cancel',()=>close(false)),add);
+    function preview() {
+      const code=detail.querySelector('pre');
+      if (code) code.textContent=JSON.stringify(makeCatalogStep(selected,id.value,name.value,subpath,overrides),null,2);
+    }
+    async function loadSubInputs(path) {
+      const seq=++request;loading=true;add.disabled=true;subpath='';inputSchema={};overrides=Object.create(null);error.textContent='';
+      const group=detail.querySelector('.catalog-inputs');group.replaceChildren();
+      try {
+        const data=await api(fileUrl(path));if(seq!==request || !dialog.open)return;
+        subpath=path;inputSchema=data.workflow.inputs || {};
+        for(const [key,input] of Object.entries(inputSchema)) {
+          const value=element('input');value.placeholder=input.default==null ? 'Required' : 'Default: '+String(input.default);value.setAttribute('aria-label','Override '+key);
+          value.addEventListener('input',()=>{if(value.value!=='' || input.default==null)overrides[key]=value.value;else delete overrides[key];preview();});
+          group.append(field(key+' ('+input.type+')',value));
+        }
+        if (!Object.keys(inputSchema).length)group.append(element('p','No input overrides needed.','quiet'));
+        preview();
+      } catch(err) {if(seq===request)error.textContent=err.message;}
+      finally {if(seq===request){loading=false;add.disabled=!subpath;}}
+    }
+    async function renderDetail() {
+      request++;inputSchema={};overrides=Object.create(null);subpath='';error.textContent='';name.value=selected.name;detail.replaceChildren(element('h3',selected.name),element('p',selected.description || 'Edit command arguments after adding this step.','quiet'));
+      add.disabled=false;
+      if(selected.category==='Sub-Workflows') {
+        add.disabled=true;const select=element('select');select.setAttribute('aria-label','Sub-workflow file');const empty=element('option','Choose a workflow…');empty.value='';select.append(empty);
+        const group=element('div',undefined,'catalog-inputs');detail.append(field('Workflow file',select),group);
+        const seq=request;
+        try {const files=await api('/api/files');if(seq!==request || !dialog.open)return;for(const path of files.workflows){const option=element('option',path);option.value=path;select.append(option);}}
+        catch(err){if(seq===request)error.textContent=err.message;}
+        select.addEventListener('change',()=>{if(select.value)loadSubInputs(select.value);else {request++;subpath='';inputSchema={};overrides=Object.create(null);add.disabled=true;group.replaceChildren();preview();}});
+      }
+      if (selected!==null) {detail.append(element('pre'));preview();}
+    }
+    function renderList() {
+      list.replaceChildren();const matching=presets.filter(preset=>catalogMatches(preset,category,search.value));
+      if (category === 'DSCR') list.append(banner);
+      for(const preset of matching){const row=button(preset.name,()=>{selected=preset;renderList();renderDetail();},'catalog-preset');row.setAttribute('aria-pressed',String(preset===selected));row.append(element('code',preset.cmd[0]));list.append(row);}
+      if(!matching.length)list.append(element('p','No matching commands.','quiet'));
+    }
+    for(const label of CATALOG_CATEGORIES){const value=label==='All'?'All':label.slice(label.indexOf(' ')+1);const control=button(label,()=>{category=value;for(const child of tabs.children)child.setAttribute('aria-pressed',String(child===control));banner.hidden=category!=='DSCR';const first=presets.find(preset=>catalogMatches(preset,category,search.value));if(first && !catalogMatches(selected,category,search.value)){selected=first;renderDetail();}renderList();});control.setAttribute('aria-pressed',String(value===category));tabs.append(control);}
+    banner.append(element('span','DSCR 1.6.13 · Dynamic Semantic Coordinate Routing — Sovereign Layer 0 Runtime · '));
+    const link = element('a','nexdatas.com ↗');
+    link.href = 'https://nexdatas.com';
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    banner.append(link);
+    search.addEventListener('input',renderList);id.addEventListener('input',preview);name.addEventListener('input',preview);
+    dialog.append(search,metadata,tabs,layout,error,actions);renderList();
+    // Start after showModal(), so asynchronous responses can check dialog.open.
+    queueMicrotask(()=>{renderDetail();search.focus();});
+  });
+}
+
 function addStep(kind) {
   if (!editAllowed()) return;
   let number = 1;
@@ -1137,6 +1341,7 @@ function renderRequirements(data) {
   const panel = $('requirement-items');
   panel.replaceChildren();
   if (!data) { panel.textContent = 'Requirements will update when the draft is valid.'; return; }
+  if (data.error) panel.append(element('p',data.error,'catalog-error'));
   function table(title,headers,rows) {
     panel.append(element('h3',title));
     const scroll = element('div',undefined,'requirements-scroll');
@@ -1168,7 +1373,7 @@ function renderRequirements(data) {
     const badge = element('span',binary.installed ? '✓ Installed' : '✗ Missing','requirement-status');
     badge.dataset.ok = String(binary.installed);
     return [element('code',binary.name),(binary.sources || ['step cmd']).join(', '),badge,
-      element('code',binary.path || 'Install this executable and add it to PATH')];
+      element('code',binary.path || (binary.name === 'dscr' ? 'Not in PATH — Nexdatas DSCR Edge AI engine (https://nexdatas.com)' : 'Install this executable and add it to PATH'))];
   }));
   if (data.models.length) table('Local AI Models (Ollama)',['Model','Referenced By','Pull Command'],
     data.models.map(model => {
@@ -1489,7 +1694,7 @@ $('layout').addEventListener('click',() => {
   render();
 });
 $('add-input').addEventListener('click',addInput);
-$('add-command').addEventListener('click',() => addStep('command'));
+$('add-command').addEventListener('click',openCommandCatalog);
 $('add-switch').addEventListener('click',() => addStep('switch'));
 $('validate').addEventListener('click',() => validate());
 $('save').addEventListener('click',() => save());

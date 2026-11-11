@@ -198,6 +198,7 @@ See the [workflow gallery](examples/README.md) for the ETL and release gate exam
 - Route a Rust source triage report from a [local Ollama model](examples/08-ollama-local-pr-triage.yaml).
 - Fetch a REST endpoint with retries and write validated JSONL through an [atomic pipe](examples/09-generic-http-api-pipeline.yaml).
 - Turn a local voiceover into a waveform or recording MP4 with the [YouTube capsule generator](examples/10-youtube-capsule-generator.yaml).
+- Run two gallery workflows in parallel and combine their reports with [composable sub-workflows](examples/11-composable-subworkflows.yaml).
 
 ### Stream local speech with Ollama and Phonon
 
@@ -308,6 +309,8 @@ stdo serve -f examples/03-release-gate-switch.yaml --port 8080
 Open [Studio](http://127.0.0.1:8080) in your browser. With no file argument, Studio selects `stdo.yaml` if present, then the first YAML file from the working directory or `examples/`. Studio binds to IPv4 loopback and serves the editor from the binary.
 
 - Drag nodes to arrange them. Connect output and input ports to add pipe, template, or switch links. Click an edge to remove it.
+- **+ Command Step** opens a searchable catalog of 40 presets across Basics, Files & Data, HTTP & API, Ollama, DSCR, AWS, GCP, Media, and Sub-Workflows. Select a saved child workflow and configure its input overrides visually. Presets are editable starting points; external tools, credentials, models, and capsules must be installed or configured separately. External network access is performed by those tools, not by the orchestrator.
+- Direct `stdo run -f child.yaml` commands receive a **🔗 Sub-workflow** badge and **Open ↗** link. Doctor and Requirements recursively inspect child workflows, merge CLI/model requirements, and reject YAML call cycles. File paths use the process working directory; keep referenced YAML files inside the workspace. Static validation is bounded to 16 nested files and 64 calls and cannot expand shell wrappers or arguments generated from runtime step outputs.
 - The inspector has four tabs: **Requirements** lists executable availability, local model hints, and workflow inputs; **Edit** configures inputs and steps; **YAML** edits the same draft as text; **Run inspector** shows live output and telemetry.
 - **Validate (Doctor)** checks the draft. **Save** validates and atomically updates the current file; **Save As…** chooses a new workspace path.
 - Use **Run Workflow** to execute the draft with optional input overrides and cache bypass. Studio streams node states and a bounded stdout preview over SSE, then shows workflow output, timings, cache hits, and the PID ledger on failure. Inline `<audio>` and `<video>` artifact players let you listen to WAV output and watch MP4 output, with download links alongside them.

@@ -15,7 +15,8 @@ const SPEECH: &str = "examples/07-ollama-gemma4-phonon-speech.yaml";
 const TRIAGE: &str = "examples/08-ollama-local-pr-triage.yaml";
 const HTTP: &str = "examples/09-generic-http-api-pipeline.yaml";
 const CAPSULE: &str = "examples/10-youtube-capsule-generator.yaml";
-const GALLERY: [&str; 10] = [
+const COMPOSABLE: &str = "examples/11-composable-subworkflows.yaml";
+const GALLERY: [&str; 11] = [
     AUDIT,
     ETL,
     GATE,
@@ -26,6 +27,7 @@ const GALLERY: [&str; 10] = [
     TRIAGE,
     HTTP,
     CAPSULE,
+    COMPOSABLE,
 ];
 
 fn root() -> &'static Path {
@@ -587,4 +589,87 @@ fn repo_examples_render_the_same_output_from_the_gallery_directory() {
         );
         assert_eq!(output.stdout, invoke("run", file, &[]).as_bytes());
     }
+}
+
+#[test]
+fn composable_gallery_checks_and_runs_both_children() {
+    let executable = Path::new(env!("CARGO_BIN_EXE_stdo"));
+    let path = env::join_paths(
+        std::iter::once(executable.parent().unwrap().to_owned())
+            .chain(env::split_paths(&env::var_os("PATH").unwrap())),
+    )
+    .unwrap();
+    for action in ["doctor", "run"] {
+        let output = Command::new(executable)
+            .current_dir(root())
+            .env("PATH", &path)
+            .args([action, "-f", COMPOSABLE])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let text = String::from_utf8(output.stdout).unwrap();
+        if action == "doctor" {
+            assert!(text.contains("3 steps in 2 layers, required executables available"));
+        } else {
+            assert!(text.contains("## Repository audit\nYAML files: 11"));
+            assert!(text.contains("## Sensor stream\nALERT: 2 hot readings\nFirst: west at 32 C"));
+        }
+    }
+}
+
+#[test]
+fn doctor_recurses_with_child_overrides_without_spawning_commands() {
+    let workspace = StubWorkspace::new("nested-doctor");
+    workspace.stub("stdo", "exit 98");
+    workspace.stub("ollama", "exit 99");
+    let parent = workspace.0.join("a.yaml");
+    fs::write(&parent,"version: '1.0'\nname: a\nsteps:\n  - id: invoke\n    cmd: [stdo, run, --file, b.yaml, -i, llm_model=custom-model]\n").unwrap();
+    fs::write(workspace.0.join("b.yaml"),"version: '1.0'\nname: b\ninputs:\n  llm_model: {type: string, default: gemma4}\nsteps:\n  - id: prompt\n    cmd: [ollama, run, '{{ inputs.llm_model }}', hello]\n  - id: nested\n    cmd: [stdo, run, --file=c.yaml]\n").unwrap();
+    let missing = workspace.invoke("doctor", parent.to_str().unwrap(), &[]);
+    assert!(!missing.status.success());
+    assert!(String::from_utf8_lossy(&missing.stderr).contains("sub-workflow \"c.yaml\""));
+    let child = workspace.0.join("c.yaml");
+    fs::write(&child,"version: '1.0'\nname: c\nsteps:\n  - id: leaf\n    cmd: [stdo-example-missing-executable]\n").unwrap();
+    let missing = workspace.invoke("doctor", parent.to_str().unwrap(), &[]);
+    assert!(!missing.status.success());
+    let error = String::from_utf8_lossy(&missing.stderr);
+    assert!(error.contains("stdo-example-missing-executable") && error.contains("c.yaml"));
+    fs::write(
+        &child,
+        "version: '1.0'\nname: c\nsteps:\n  - id: leaf\n    cmd: [echo, ok]\n",
+    )
+    .unwrap();
+    let summary = workspace.success("doctor", parent.to_str().unwrap(), &[]);
+    assert!(summary.contains("Local Ollama models (availability not probed): custom-model"));
+    assert!(!summary.contains("gemma4"));
+}
+
+#[test]
+fn doctor_rejects_canonical_cycles_and_workspace_escapes() {
+    let workspace = StubWorkspace::new("nested-cycle");
+    let parent = workspace.0.join("a.yaml");
+    fs::write(
+        &parent,
+        "version: '1.0'\nname: a\nsteps:\n  - id: child\n    cmd: [stdo, run, -f, b.yaml]\n",
+    )
+    .unwrap();
+    let child = workspace.0.join("b.yaml");
+    fs::write(
+        &child,
+        "version: '1.0'\nname: b\nsteps:\n  - id: child\n    cmd: [stdo, run, --file, ./a.yaml]\n",
+    )
+    .unwrap();
+    let result = workspace.invoke("doctor", parent.to_str().unwrap(), &[]);
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("a.yaml -> b.yaml -> a.yaml"));
+    fs::remove_file(&child).unwrap();
+    std::os::unix::fs::symlink(root().join(AUDIT), child).unwrap();
+    let result = workspace.invoke("doctor", parent.to_str().unwrap(), &[]);
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr)
+        .contains("must be a YAML file inside the workspace"));
 }
