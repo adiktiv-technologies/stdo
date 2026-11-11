@@ -9,7 +9,7 @@ inputs:
   background_video:
     type: string
     default: ""
-    description: "Optional path to a screen recording (.mov/.mp4). If empty, FFmpeg generates a compact 720p animated audio waveform."
+    description: "Optional path to a screen recording (.mov/.mp4). If empty, FFmpeg generates a compact 360p animated audio waveform."
   output_wav: { type: path, default: /tmp/stdo-capsule-voice.wav }
   output_mp4: { type: path, default: /tmp/stdo-youtube-capsule.mp4 }
 
@@ -91,10 +91,10 @@ steps:
             -c:v libx264 -preset veryfast -pix_fmt yuv420p -c:a aac -b:a 192k -shortest -movflags +faststart "$tmp"
         else
           ffmpeg -nostdin -hide_banner -loglevel error -y \
-            -f lavfi -i 'color=c=0x0d1117:s=1280x720:r=30' -i "$wav" \
-            -filter_complex "[1:a]asplit=2[a_vis][a_raw];[a_vis]aformat=channel_layouts=mono,compand,showwaves=s=1280x720:mode=cline:rate=30:scale=sqrt:colors=0x38bdf8[fg];[0:v][fg]overlay=format=auto,format=yuv420p[v];[a_raw]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo[a]" \
-            -map "[v]" -map "[a]" -c:v libx264 -crf 23 -preset veryfast -pix_fmt yuv420p \
-            -c:a aac -b:a 192k -shortest -movflags +faststart "$tmp"
+            -f lavfi -i 'color=c=0x0d1117:s=640x360:r=24' -i "$wav" \
+            -filter_complex "[1:a]asplit=2[a_vis][a_raw];[a_vis]aformat=channel_layouts=mono,compand,showwaves=s=640x360:mode=cline:rate=24:scale=sqrt:colors=0x38bdf8[fg];[0:v][fg]overlay=format=auto,format=yuv420p[v];[a_raw]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo[a]" \
+            -map "[v]" -map "[a]" -c:v libx264 -tune animation -crf 28 -preset veryslow -maxrate 120k -bufsize 240k -pix_fmt yuv420p \
+            -c:a aac -b:a 64k -shortest -movflags +faststart "$tmp"
         fi
         bytes=$(wc -c < "$tmp")
         [ ! -d "$out" ]
