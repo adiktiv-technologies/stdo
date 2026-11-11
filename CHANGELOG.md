@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.3](https://github.com/adiktiv-technologies/stdo/compare/v0.5.2...v0.5.3) - 2026-11-11
+
+### Added
+
+- *(studio,examples)* add YouTube capsule generator workflow and inline MP4 video player ([#28](https://github.com/adiktiv-technologies/stdo/pull/28))
+
+### Fixed
+
+- *(assets,readme)* compress pronunciation MP4 under 300KB and remove README spoilers ([#30](https://github.com/adiktiv-technologies/stdo/pull/30))
+
+### Other
+
+- *(readme)* use inline-playable CDN URL for pronunciation speaker link ([#31](https://github.com/adiktiv-technologies/stdo/pull/31))
+- *(repo)* ignore local agent config files ([#27](https://github.com/adiktiv-technologies/stdo/pull/27))
+- *(readme)* align inline WAV example with atomic sink, remove version lag, and test concurrent writers ([#26](https://github.com/adiktiv-technologies/stdo/pull/26))
+
 ## [0.5.2](https://github.com/adiktiv-technologies/stdo/compare/v0.5.1...v0.5.2) - 2026-11-10
 
 ### Fixed
