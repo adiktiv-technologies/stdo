@@ -386,6 +386,15 @@ impl Studio {
         }
     }
 
+    async fn execution_draft(&self, draft: Draft) -> Result<(Workflow, Option<PathBuf>), Problem> {
+        let source = match draft.path.as_deref() {
+            Some(path) => Some(self.path(path).await?),
+            None => None,
+        };
+        let workflow = self.run_workflow(draft).await?;
+        Ok((workflow, source.filter(|path| path.is_file())))
+    }
+
     fn run_permit(&self) -> Result<tokio::sync::SemaphorePermit<'_>, Problem> {
         self.runs
             .try_acquire()
@@ -394,10 +403,11 @@ impl Studio {
 
     async fn run(&self, request: Run) -> Result<Response, Problem> {
         let _permit = self.run_permit()?;
-        let workflow = self.run_workflow(request.draft).await?;
+        let (workflow, source) = self.execution_draft(request.draft).await?;
         let result = self
             .execute(
                 &workflow,
+                source.as_deref(),
                 &request.inputs,
                 request.no_cache,
                 &Telemetry::for_studio(),
@@ -413,7 +423,7 @@ impl Studio {
     ) -> Result<(), Problem> {
         let request: Run = decode(body)?;
         let _permit = self.run_permit()?;
-        let workflow = self.run_workflow(request.draft).await?;
+        let (workflow, source) = self.execution_draft(request.draft).await?;
         // Request::read has already consumed the complete body before this response.
         if http::start_stream(socket).await.is_err() {
             return Ok(());
@@ -422,7 +432,13 @@ impl Studio {
         let telemetry = Telemetry::for_studio().with_events(events.clone());
         let run = async move {
             let mut result = self
-                .execute(&workflow, &request.inputs, request.no_cache, &telemetry)
+                .execute(
+                    &workflow,
+                    source.as_deref(),
+                    &request.inputs,
+                    request.no_cache,
+                    &telemetry,
+                )
                 .await;
             result["live_stdout_truncated"] = json!(events.truncated());
             events.emit(EngineEvent::WorkflowFinished { result });
@@ -434,14 +450,16 @@ impl Studio {
     async fn execute(
         &self,
         workflow: &Workflow,
+        source: Option<&Path>,
         inputs: &[String],
         no_cache: bool,
         telemetry: &Telemetry,
     ) -> serde_json::Value {
         let ledger = ProcessLedger::default();
         let mut stdout = Vec::new();
-        let result = engine::run_with_options(
+        let result = engine::run_with_source(
             workflow,
+            source,
             inputs,
             &ledger,
             &mut stdout,

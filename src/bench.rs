@@ -112,7 +112,7 @@ pub async fn run(
     for (index, file) in files.iter().enumerate() {
         let workflow = Workflow::read(file)?;
         for trial in 0..warmup {
-            run_trial(&workflow, overrides, no_cache, None)
+            run_trial(&workflow, file, overrides, no_cache, None)
                 .await
                 .map_err(|error| trial_error(file, "warmup", trial, error))?;
         }
@@ -120,7 +120,7 @@ pub async fn run(
         let mut by_step = BTreeMap::<String, Vec<f64>>::new();
         for trial in 0..runs {
             let telemetry = Telemetry::default();
-            run_trial(&workflow, overrides, no_cache, Some(&telemetry))
+            run_trial(&workflow, file, overrides, no_cache, Some(&telemetry))
                 .await
                 .map_err(|error| trial_error(file, "measured", trial, error))?;
             let ExecutionTelemetry {
@@ -204,12 +204,14 @@ pub async fn run(
 
 async fn run_trial(
     workflow: &Workflow,
+    source: &Path,
     overrides: &[String],
     no_cache: bool,
     telemetry: Option<&Telemetry>,
 ) -> Result<(), Error> {
-    engine::run_with_options(
+    engine::run_with_source(
         workflow,
+        Some(source),
         overrides,
         &ProcessLedger::default(),
         &mut io::sink(),

@@ -89,8 +89,9 @@ pub async fn run(
         bytes: 0,
     };
     let result = match parsed {
-        Ok(workflow) => engine::run_with_options(
+        Ok(workflow) => engine::run_with_source(
             &workflow,
+            Some(workflow_path),
             overrides,
             ledger,
             &mut output,
