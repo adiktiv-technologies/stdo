@@ -32,6 +32,12 @@ pub(super) struct Captured {
     pub(super) status: ExitStatus,
 }
 
+#[derive(Clone)]
+pub(super) struct SpawnContext {
+    pub(super) call_stack: Arc<str>,
+    pub(super) ledger: ProcessLedger,
+}
+
 pub(super) struct Running {
     started: Instant,
     child: Child,
@@ -53,7 +59,7 @@ impl Running {
         ignore_exit_code: bool,
         timeout_ms: Option<u64>,
         stream_stdout: bool,
-        ledger: ProcessLedger,
+        context: &SpawnContext,
     ) -> Result<Self, Error> {
         let started = Instant::now();
         let mut process = Command::new(&command[0]);
@@ -61,6 +67,10 @@ impl Running {
         process.process_group(0);
         let child = process
             .args(&command[1..])
+            .env(
+                crate::doctor::subworkflows::CALL_STACK_ENV,
+                context.call_stack.as_ref(),
+            )
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -68,7 +78,7 @@ impl Running {
             .spawn()
             .map_err(|source| process_error(step, source))?;
         let group = child.id().expect("new child has a PID");
-        let entry = ledger.record(group, step, command.to_vec());
+        let entry = context.ledger.record(group, step, command.to_vec());
         Ok(Self {
             started,
             child,
@@ -78,7 +88,7 @@ impl Running {
             ignore_exit_code,
             timeout_ms,
             stream_stdout,
-            ledger,
+            ledger: context.ledger.clone(),
             entry,
         })
     }

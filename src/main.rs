@@ -101,7 +101,15 @@ async fn dispatch(
                 .await?;
             } else {
                 let workflow = Workflow::read(file.path())?;
-                engine::run_with_options(&workflow, &input, ledger, &mut stdout, options).await?;
+                engine::run_with_source(
+                    &workflow,
+                    Some(file.path()),
+                    &input,
+                    ledger,
+                    &mut stdout,
+                    options,
+                )
+                .await?;
             }
         }
         Command::Bench {

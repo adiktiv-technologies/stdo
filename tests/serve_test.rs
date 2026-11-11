@@ -422,3 +422,34 @@ fn studio_rejects_cross_origin_requests_and_paths_outside_the_workspace() {
     assert_eq!(status, 400);
     assert!(!studio.root.join("stdo.yaml").exists());
 }
+
+#[test]
+fn studio_rejects_subworkflow_cycles_before_spawning() {
+    let studio = Studio::start();
+    fs::write(studio.root.join("stdo.yaml"), json!({
+        "version":"1.0", "name":"parent", "steps":[
+            {"id":"canary","cmd":["sh","-c","set -C; : > spawned"]},
+            {"id":"child","cmd":["stdo","run","-f","child.yaml"],"stdin":"{{ steps.canary.stdout }}"}
+        ]
+    }).to_string()).unwrap();
+    fs::write(
+        studio.root.join("child.yaml"),
+        json!({
+            "version":"1.0", "name":"child", "steps":[
+                {"id":"parent","cmd":["stdo","run","-f","stdo.yaml"]}
+            ]
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let draft = json!({"path":"stdo.yaml"});
+    let result = studio.json("POST", "/api/run", Some(&draft));
+    assert_eq!(result["ok"], false);
+    assert_eq!(result["pid_ledger"], json!([]));
+    assert!(result["error"]
+        .as_str()
+        .unwrap()
+        .contains("stdo.yaml -> child.yaml -> stdo.yaml"));
+    assert!(!studio.root.join("spawned").exists());
+}

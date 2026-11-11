@@ -8,7 +8,7 @@ pub mod runner;
 pub(crate) mod telemetry;
 pub mod template;
 
-use std::{collections::BTreeMap, io, sync::Arc, time::Duration};
+use std::{collections::BTreeMap, io, path::Path, sync::Arc, time::Duration};
 
 use minijinja::{context, value::Object, Value as TemplateValue};
 use serde_json::Value;
@@ -19,6 +19,7 @@ use crate::{
         graph::Graph,
         schema::{CommandStep, Input, InputKind, PipeMode, StdoutFormat, StepKind, Workflow},
     },
+    doctor::subworkflows,
     error::Error,
 };
 
@@ -26,7 +27,7 @@ pub use self::ledger::ProcessLedger;
 pub use self::telemetry::Telemetry;
 use self::{
     budget::{Budget, Buffer},
-    runner::{Captured, Running},
+    runner::{Captured, Running, SpawnContext},
     telemetry::Status,
 };
 
@@ -79,8 +80,20 @@ pub async fn run_with_options(
     output: &mut impl io::Write,
     options: RunOptions<'_>,
 ) -> Result<(), Error> {
+    run_with_source(workflow, None, overrides, ledger, output, options).await
+}
+
+/// Execute a workflow with its file identity available for recursive call checks.
+pub async fn run_with_source(
+    workflow: &Workflow,
+    source: Option<&Path>,
+    overrides: &[String],
+    ledger: &ProcessLedger,
+    output: &mut impl io::Write,
+    options: RunOptions<'_>,
+) -> Result<(), Error> {
     let telemetry = options.telemetry;
-    let result = run_workflow(workflow, overrides, ledger, output, options).await;
+    let result = run_workflow(workflow, source, overrides, ledger, output, options).await;
     if let Some(telemetry) = telemetry {
         telemetry.finish();
     }
@@ -89,6 +102,7 @@ pub async fn run_with_options(
 
 async fn run_workflow(
     workflow: &Workflow,
+    source: Option<&Path>,
     overrides: &[String],
     ledger: &ProcessLedger,
     output: &mut impl io::Write,
@@ -101,6 +115,12 @@ async fn run_workflow(
     } = options;
     let graph = Graph::build_with_force(workflow, force)?;
     let inputs = resolve_inputs(workflow, overrides)?;
+    let spawn_context = SpawnContext {
+        call_stack: Arc::from(subworkflows::execution_stack(
+            workflow, source, overrides, force,
+        )?),
+        ledger: ledger.clone(),
+    };
     let argv_context = context! { inputs => &inputs };
     let budget = telemetry
         .map(|report| report.budget.clone())
@@ -315,7 +335,7 @@ async fn run_workflow(
             } else {
                 None
             };
-            let ledger = ledger.clone();
+            let spawn_context = spawn_context.clone();
             let ignore_exit_code = command.ignore_exit_code;
             let timeout_ms = command.timeout_ms;
             let spawn = move |id: &str, input| {
@@ -326,7 +346,7 @@ async fn run_workflow(
                     ignore_exit_code,
                     timeout_ms,
                     !retries,
-                    ledger.clone(),
+                    &spawn_context,
                 )
             };
             let mut running = match spawn(id, input) {
