@@ -103,6 +103,77 @@ impl Studio {
 }
 
 #[test]
+fn studio_reports_requirements_and_saves_workspace_files() {
+    let studio = Studio::start();
+    let (_, html) = studio.request("GET", "/", None, "");
+    let positions: Vec<_> = ["requirements", "edit", "yaml", "inspect"]
+        .iter()
+        .map(|name| html.find(&format!("data-tab=\"{name}\"")).unwrap())
+        .collect();
+    assert!(positions.windows(2).all(|pair| pair[0] < pair[1]));
+    assert!(html.contains("id=\"save\">Save</button>"));
+    assert!(html.contains("id=\"help\" title=\"Help\" aria-label=\"Help\">?</button>"));
+    for label in [
+        "Executable",
+        "Source",
+        "Resolved Path",
+        "Referenced By",
+        "Pull Command",
+        "Default / Current Value",
+    ] {
+        assert!(html.contains(label));
+    }
+    let draft = json!({"workflow":{
+        "version":"1.0","name":"requirements",
+        "inputs":{"tts_model":{"type":"string","default":"phonon:latest"},"required":{"type":"path"}},
+        "steps":[{"id":"check","cmd":["sh","-c","ffmpeg -version; jq --version"]}]
+    }});
+    let requirements = studio.json("POST", "/api/doctor", Some(&draft));
+    assert!(requirements["binaries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|binary| binary["name"] == "ffmpeg"));
+    assert_eq!(requirements["models"], json!(["phonon:latest"]));
+    assert!(requirements["inputs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|input| input["name"] == "required" && input["status"] == "required"));
+    let mut file = draft;
+    file["path"] = json!("examples/saved.yaml");
+    let saved = studio.json("POST", "/api/file", Some(&file));
+    assert_eq!(saved["workflow"]["name"], "requirements");
+    assert!(studio.root.join("examples/saved.yaml").is_file());
+    let listing = studio.json("GET", "/api/workflows", None);
+    assert!(listing["workflows"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("examples/saved.yaml")));
+    assert_eq!(listing["directories"], json!([".", "examples"]));
+}
+
+#[test]
+fn studio_serves_mp4_byte_ranges() {
+    let studio = Studio::start();
+    fs::write(studio.root.join("capsule.mp4"), b"\0\0\0\x0cftypisom").unwrap();
+    let mut socket = studio.connect(
+        "GET",
+        "/api/artifact?path=capsule.mp4",
+        None,
+        "Range: bytes=4-11\r\n",
+    );
+    let mut response = String::new();
+    socket.read_to_string(&mut response).unwrap();
+    let (headers, body) = response.split_once("\r\n\r\n").unwrap();
+    assert!(headers.starts_with("HTTP/1.1 206 Partial Content"));
+    assert!(headers.contains("Content-Type: video/mp4"));
+    assert!(headers.contains("Accept-Ranges: bytes"));
+    assert!(headers.contains("Content-Range: bytes 4-11/12"));
+    assert_eq!(body, "ftypisom");
+}
+
+#[test]
 fn studio_streams_stdout_before_workflow_completion() {
     let studio = Studio::start();
     let draft = json!({"workflow": {

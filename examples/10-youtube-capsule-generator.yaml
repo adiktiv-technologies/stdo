@@ -1,0 +1,112 @@
+version: "1.0"
+name: youtube-capsule-generator
+description: Generate a local voiceover and render a waveform or recording MP4.
+
+inputs:
+  topic: { type: string, default: "Why piping local CLI tools like Ollama and FFmpeg over Unix file descriptors in stdo is faster and safer than heavy workflow daemons." }
+  llm_model: { type: string, default: gemma4 }
+  tts_model: { type: string, default: "phonon:latest" }
+  background_video:
+    type: string
+    default: ""
+    description: "Optional path to a screen recording (.mov/.mp4). If empty, FFmpeg generates a compact 720p animated audio waveform."
+  output_wav: { type: path, default: /tmp/stdo-capsule-voice.wav }
+  output_mp4: { type: path, default: /tmp/stdo-youtube-capsule.mp4 }
+
+steps:
+  - id: write_script
+    cmd: [ollama, run, "{{ inputs.llm_model }}", --hidethinking, "Write a punchy, natural 3-sentence spoken voiceover (around 55 words, plain text only, no markdown, no stage directions, no quotes) explaining: {{ inputs.topic }}"]
+    cache: true
+    timeout_ms: 60000
+    retry: { attempts: 2, backoff_ms: 500 }
+
+  - id: synthesize_voice
+    cmd: [ollama, run, "{{ inputs.tts_model }}"]
+    pipe_from: write_script
+    capture_stdout: false
+    timeout_ms: 60000
+
+  - id: stage_wav
+    cmd:
+      - sh
+      - -c
+      - |
+        set -eu
+        case "$1" in /*) target=$1 ;; *) target=./$1 ;; esac
+        tmp="$target.tmp.$$"
+        umask 077
+        (set -C; : > "$tmp")
+        trap 'rm -f "$tmp"' 0
+        trap 'exit 1' HUP INT TERM
+        cat > "$tmp"
+        printf '%s\n' "$$"
+        trap - 0 HUP INT TERM
+      - stage-wav
+      - "{{ inputs.output_wav }}"
+    pipe_from: synthesize_voice
+
+  - id: save_voice_wav
+    cmd:
+      - sh
+      - -c
+      - |
+        set -eu
+        case "$1" in /*) target=$1 ;; *) target=./$1 ;; esac
+        IFS= read -r pid
+        case "$pid" in ''|*[!0-9]*) exit 1 ;; esac
+        tmp="$target.tmp.$pid"
+        trap 'rm -f "$tmp"' 0
+        trap 'exit 1' HUP INT TERM
+        bytes=$(wc -c < "$tmp")
+        [ ! -d "$target" ]
+        mv -f "$tmp" "$target"
+        printf '%s\n' "$bytes"
+      - write-wav
+      - "{{ inputs.output_wav }}"
+    stdin: |
+      {{ steps.stage_wav.stdout | trim }}
+      {# The dependency below waits for Phonon's successful exit as well. #}
+      {{ steps.synthesize_voice.exit_code }}
+
+  - id: render_mp4
+    cmd:
+      - sh
+      - -c
+      - |
+        set -eu
+        case "$1" in /*) wav=$1 ;; *) wav=./$1 ;; esac
+        case "$2" in /*) out=$2 ;; *) out=./$2 ;; esac
+        bg=$3
+        tmp="$out.tmp.$$.mp4"
+        umask 077
+        (set -C; : > "$tmp")
+        trap 'rm -f "$tmp"' 0
+        trap 'exit 1' HUP INT TERM
+        if [ -n "$bg" ] && [ -f "$bg" ]; then
+          case "$bg" in /*) ;; *) bg=./$bg ;; esac
+          ffmpeg -nostdin -hide_banner -loglevel error -y -stream_loop -1 -i "$bg" -i "$wav" \
+            -map 0:v:0 -map 1:a:0 \
+            -vf 'scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30' \
+            -af 'aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo' \
+            -c:v libx264 -preset veryfast -pix_fmt yuv420p -c:a aac -b:a 192k -shortest -movflags +faststart "$tmp"
+        else
+          ffmpeg -nostdin -hide_banner -loglevel error -y \
+            -f lavfi -i 'color=c=0x0d1117:s=1280x720:r=30' -i "$wav" \
+            -filter_complex "[1:a]asplit=2[a_vis][a_raw];[a_vis]aformat=channel_layouts=mono,compand,showwaves=s=1280x720:mode=cline:rate=30:scale=sqrt:colors=0x38bdf8[fg];[0:v][fg]overlay=format=auto,format=yuv420p[v];[a_raw]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo[a]" \
+            -map "[v]" -map "[a]" -c:v libx264 -crf 23 -preset veryfast -pix_fmt yuv420p \
+            -c:a aac -b:a 192k -shortest -movflags +faststart "$tmp"
+        fi
+        bytes=$(wc -c < "$tmp")
+        [ ! -d "$out" ]
+        mv -f "$tmp" "$out"
+        printf '%s\n' "$bytes"
+      - render-mp4
+      - "{{ inputs.output_wav }}"
+      - "{{ inputs.output_mp4 }}"
+      - "{{ inputs.background_video }}"
+    stdin: "{{ steps.save_voice_wav.stdout }}"
+
+output: |
+  {{ steps.write_script.stdout | trim }}
+  WAV: {{ inputs.output_wav }} ({{ steps.save_voice_wav.stdout | trim }} bytes)
+  MP4: {{ inputs.output_mp4 }} ({{ steps.render_mp4.stdout | trim }} bytes)

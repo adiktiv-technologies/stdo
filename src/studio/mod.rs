@@ -1,6 +1,7 @@
 //! The offline Studio serves one bounded HTTP request per loopback connection.
 mod artifact;
 mod http;
+mod requirements;
 
 use std::{
     io,
@@ -163,6 +164,18 @@ impl Studio {
         match (request.method.as_str(), target) {
             ("GET", "/") => Ok(Response::html(HTML)),
             ("GET", "/api/workflows") => self.list().await,
+            ("GET", "/api/doctor") => {
+                let (workflow, _) = self.load(&http::query_path(query)?).await?;
+                Ok(Response::json(requirements::summary(&workflow, &[])))
+            }
+            ("POST", "/api/doctor") => {
+                let request: Run = decode(&request.body)?;
+                let workflow = self.run_workflow(request.draft).await?;
+                Ok(Response::json(requirements::summary(
+                    &workflow,
+                    &request.inputs,
+                )))
+            }
             ("GET", "/api/workflow") => {
                 let relative = http::query_path(query)?;
                 let (workflow, yaml) = self.load(&relative).await?;
@@ -177,7 +190,7 @@ impl Studio {
                 let (workflow, yaml) = decode::<Draft>(&request.body)?.parse()?;
                 Ok(inspect(&workflow, yaml))
             }
-            ("POST", "/api/workflow") => {
+            ("POST", "/api/workflow" | "/api/file") => {
                 let mut draft = decode::<Draft>(&request.body)?;
                 let relative = draft
                     .path
@@ -201,7 +214,7 @@ impl Studio {
             (
                 _,
                 "/" | "/api/workflows" | "/api/workflow" | "/api/workflow/meta" | "/api/preview"
-                | "/api/run" | "/api/run/stream" | "/api/artifact",
+                | "/api/run" | "/api/run/stream" | "/api/artifact" | "/api/doctor" | "/api/file",
             ) => Err(Problem::new(
                 "405 Method Not Allowed",
                 "Method not allowed for this endpoint",
@@ -212,6 +225,7 @@ impl Studio {
 
     async fn list(&self) -> Result<Response, Problem> {
         let mut paths = Vec::new();
+        let mut directories = Vec::new();
         for directory in [self.root.clone(), self.root.join("examples")] {
             match fs::symlink_metadata(&directory).await {
                 Ok(metadata) if metadata.is_dir() => {}
@@ -219,6 +233,11 @@ impl Studio {
                 Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
                 Err(error) => return Err(Problem::io(error)),
             }
+            directories.push(if directory == self.root {
+                "."
+            } else {
+                "examples"
+            });
             let mut entries = fs::read_dir(directory).await.map_err(Problem::io)?;
             while let Some(entry) = entries.next_entry().await.map_err(Problem::io)? {
                 let path = entry.path();
@@ -243,7 +262,7 @@ impl Studio {
             .or_else(|| paths.iter().find(|path| *path == "stdo.yaml"))
             .or_else(|| paths.first());
         Ok(Response::json(
-            json!({"workflows": paths, "selected": selected}),
+            json!({"workflows": paths, "selected": selected, "directories": directories}),
         ))
     }
 
@@ -383,7 +402,14 @@ impl Studio {
             Vec::new()
         };
         let artifacts = if result.is_ok() {
-            self.artifacts.register(&self.root, workflow, inputs).await
+            self.artifacts
+                .register(
+                    &self.root,
+                    workflow,
+                    inputs,
+                    &String::from_utf8_lossy(&stdout),
+                )
+                .await
         } else {
             Vec::new()
         };
@@ -436,7 +462,8 @@ fn inspect(workflow: &Workflow, yaml: String) -> Response {
         .or_else(|| doctor::check(workflow).err().map(|error| error.to_string()));
     Response::json(json!({
         "workflow": workflow, "sha256": sha256(yaml.as_bytes()), "yaml": yaml, "layers": layers, "graph_error": graph_error,
-        "doctor": {"ok": doctor_error.is_none(), "error": doctor_error}
+        "doctor": {"ok": doctor_error.is_none(), "error": doctor_error},
+        "requirements": requirements::summary(workflow,&[])
     }))
 }
 
@@ -471,7 +498,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn streams_wav_metadata_and_serves_only_allowed_audio_with_ranges() {
+    async fn streams_media_metadata_and_serves_only_allowed_files_with_ranges() {
         const AUDIO: &[u8] = b"RIFF\x04\0\0\0WAVE\xff";
         let directory =
             std::env::temp_dir().join(format!("stdo-studio-audio-{}", std::process::id()));
@@ -488,6 +515,9 @@ mod tests {
         let outside = fixture.0.join("outside.wav");
         fs::write(&outside, AUDIO).await.unwrap();
         fs::write(workspace.join("local.wav"), AUDIO).await.unwrap();
+        fs::write(workspace.join("local.mp4"), b"\0\0\0\x0cftypisom")
+            .await
+            .unwrap();
         fs::write(workspace.join("fake.wav"), b"unrelated data")
             .await
             .unwrap();
@@ -509,6 +539,14 @@ mod tests {
             assert!(headers.starts_with("HTTP/1.1 404 Not Found"), "{headers}");
         }
         let (headers, body) = exchange_bytes(&studio, request("GET", "local.wav", "")).await;
+        let (video_headers, video_body) = exchange_bytes(
+            &studio,
+            request("GET", "local.mp4", "Range: bytes=4-11\r\n"),
+        )
+        .await;
+        assert!(video_headers.starts_with("HTTP/1.1 206 Partial Content"));
+        assert!(video_headers.contains("Content-Type: video/mp4"));
+        assert_eq!(video_body, b"ftypisom");
         assert!(headers.contains("Content-Type: audio/wav"));
         assert_eq!(body, AUDIO);
         let (headers, _) = exchange_bytes(
@@ -521,11 +559,13 @@ mod tests {
         let draft = json!({"inputs":[format!("output_wav={outside}")],"workflow":{
             "version":"1.0", "name":"audio",
             "inputs":{"output_wav":{"type":"path","default":"missing.wav"}},
+            "output":"local.mp4",
             "steps":[
                 {"id":"speech","cmd":["sh","-c",
                     "printf RI; sleep 0.05; printf 'FF\\004\\000\\000\\000WAVE\\377'; head -c 600000 /dev/zero"],
                     "capture_stdout":false},
-                {"id":"summary","cmd":["echo","byte summary"],"stdin":"{{ steps.speech.exit_code }}"}
+                {"id":"summary","cmd":["echo","byte summary"],"stdin":"{{ steps.speech.exit_code }}"},
+                {"id":"video","cmd":["sh","-c","printf '\\000\\000'; sleep 0.05; printf '\\000\\014ftypisom'"]}
             ]
         }});
         let (headers,body) = exchange(&studio,format!(
@@ -543,6 +583,11 @@ mod tests {
             .any(|event| event["type"] == "step_stdout_binary"
                 && event["id"] == "speech"
                 && event["format"] == "RIFF/WAV audio"));
+        assert!(events
+            .iter()
+            .any(|event| event["type"] == "step_stdout_binary"
+                && event["id"] == "video"
+                && event["format"] == "MP4 video"));
         let chunks: Vec<_> = events
             .iter()
             .filter(|event| event["type"] == "step_stdout_chunk")
@@ -551,6 +596,7 @@ mod tests {
         assert_eq!(chunks[0]["id"], "summary");
         let result = &events.last().unwrap()["result"];
         assert_eq!(result["artifacts"][0]["path"], outside);
+        assert_eq!(result["artifacts"][1]["content_type"], "video/mp4");
         assert_eq!(
             result["telemetry"]["steps"][0]["stdout_bytes"],
             AUDIO.len() + 600_000
@@ -590,6 +636,40 @@ mod tests {
         let data: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert_eq!(data["layers"], json!([[0], [1], [2], [3], [4]]));
         assert_eq!(data["doctor"]["ok"], true);
+        assert!(data["requirements"]["binaries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|binary| binary["name"] == "sh" && binary["installed"] == true));
+
+        let requirements = json!({"workflow":{
+            "version":"1.0","name":"requirements",
+            "inputs":{"llm_model":{"type":"string","default":"gemma4"},"needed":{"type":"path"}},
+            "steps":[{"id":"render","cmd":["sh","-c","ffmpeg -version; jq --version; ollama run gemma4"]}]
+        }});
+        let body = requirements.to_string();
+        let (_, response) = exchange(&studio,format!(
+            "POST /api/doctor HTTP/1.1\r\nHost: 127.0.0.1:8080\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",body.len()
+        )).await;
+        let requirements: serde_json::Value = serde_json::from_str(&response).unwrap();
+        assert!(requirements["binaries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|binary| binary["name"] == "ffmpeg"));
+        assert_eq!(requirements["models"], json!(["gemma4"]));
+        assert!(requirements["inputs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|input| input["name"] == "needed" && input["status"] == "required"));
+        assert!(requirements["binaries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(
+                |binary| binary["name"] == "ffmpeg" && binary["sources"] == json!(["shell script"])
+            ));
 
         let body = json!({"workflow": {
             "version": "1.0", "name": "memory-test",

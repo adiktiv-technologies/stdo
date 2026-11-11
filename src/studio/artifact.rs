@@ -35,23 +35,29 @@ impl Store {
         root: &Path,
         workflow: &Workflow,
         overrides: &[String],
+        output: &str,
     ) -> Vec<Artifact> {
         let Ok(inputs) = engine::resolve_inputs(workflow, overrides) else {
             return Vec::new();
         };
         let mut allowed = BTreeMap::new();
         let mut artifacts = Vec::new();
-        for (name, value) in inputs {
-            if !matches!(workflow.inputs[&name].kind, InputKind::Path) {
-                continue;
+        let declared = inputs.iter().filter_map(|(name, value)| {
+            if matches!(workflow.inputs[name].kind, InputKind::Path) {
+                value.as_str().map(|path| (path, true))
+            } else {
+                None
             }
-            let Some(input) = value.as_str() else {
-                continue;
-            };
+        });
+        let printed = output.lines().map(|line| (line.trim(), false));
+        for (input, declared) in declared.chain(printed) {
             let Ok((path, metadata, mime)) = candidate(root, input).await else {
                 continue;
             };
-            if allowed.contains_key(&path) || open_audio(&path, &metadata, mime).await.is_err() {
+            if (!declared && !path.starts_with(root))
+                || allowed.contains_key(&path)
+                || open_media(&path, &metadata, mime).await.is_err()
+            {
                 continue;
             }
             let Some(name) = Path::new(input).file_name().and_then(|name| name.to_str()) else {
@@ -79,7 +85,7 @@ impl Store {
         {
             return Err(unavailable());
         }
-        let file = open_audio(&path, &metadata, mime).await?;
+        let file = open_media(&path, &metadata, mime).await?;
         Ok((file, metadata.len(), mime))
     }
 }
@@ -99,6 +105,9 @@ async fn candidate(root: &Path, input: &str) -> Result<(PathBuf, Metadata, &'sta
         Some("mp3") => "audio/mpeg",
         Some("ogg" | "opus") => "audio/ogg",
         Some("flac") => "audio/flac",
+        Some("mp4") => "video/mp4",
+        Some("webm") => "video/webm",
+        Some("mov") => "video/quicktime",
         _ => return Err(unavailable()),
     };
     let requested = root.join(input);
@@ -118,7 +127,7 @@ fn identity(metadata: &Metadata) -> (u64, u64) {
     (metadata.dev(), metadata.ino())
 }
 
-async fn open_audio(path: &Path, expected: &Metadata, mime: &str) -> Result<File, Problem> {
+async fn open_media(path: &Path, expected: &Metadata, mime: &str) -> Result<File, Problem> {
     let mut file = File::open(path).await.map_err(|_| unavailable())?;
     let metadata = file.metadata().await.map_err(|_| unavailable())?;
     if !metadata.is_file() || identity(&metadata) != identity(expected) {
@@ -135,6 +144,9 @@ async fn open_audio(path: &Path, expected: &Metadata, mime: &str) -> Result<File
         }
         "audio/ogg" => header.starts_with(b"OggS"),
         "audio/flac" => header.starts_with(b"fLaC"),
+        "video/mp4" => &header[4..8] == b"ftyp",
+        "video/webm" => header.starts_with(b"\x1a\x45\xdf\xa3"),
+        "video/quicktime" => matches!(&header[4..8], b"ftyp" | b"moov" | b"wide" | b"mdat"),
         _ => false,
     };
     if !matches {
@@ -144,5 +156,5 @@ async fn open_audio(path: &Path, expected: &Metadata, mime: &str) -> Result<File
 }
 
 fn unavailable() -> Problem {
-    Problem::new("404 Not Found", "Audio artifact not available")
+    Problem::new("404 Not Found", "Media artifact not available")
 }

@@ -1,6 +1,6 @@
 <div align="center">
 
-# ⚡ `stdo`
+# ⚡ `stdo` <sup><a href="assets/stdo-pronunciation.mp4" title="Hear how stdo is pronounced">🔊</a></sup>
 
 **Standard I/O Orchestrator — Workflow-as-Code meets the Unix Philosophy.**
 
@@ -24,7 +24,7 @@ A compact, zero-network Rust binary that orchestrates local CLI tools (`curl`, `
 
 Cron and job tools such as Dagu, Airflow, and Task organize when jobs run and which jobs depend on one another. `stdo` focuses on what flows between running commands. It is a **bounded-memory Unix process dataflow engine** that connects process stdin (`fd 0`) and stdout (`fd 1`) and monitors the bytes in transit.
 
-**`stdo` (pronounced _"studio"_ or _"S-T-D-O"_) takes the radical Unix path:**
+**stdo** *(pronounced "studio" or "S-T-D-O" [🔊](assets/stdo-pronunciation.mp4))* takes the radical Unix path:
 
 1. **Zero built-in outbound networking:** The orchestrator binary has no outbound network stack. Commands it starts, such as `curl`, can access the network directly.
 2. **True `stdin` / `stdout` Piping (No `ARG_MAX` Crashes):** Passing megabytes of JSON or RAG context through environment variables (`${OUTPUT}`) crashes the OS kernel (`ARG_MAX` limit) and invites shell-injection bugs. `stdo` streams data directly through process file descriptors (`fd 0` and `fd 1`).
@@ -197,8 +197,11 @@ See the [workflow gallery](examples/README.md) for the ETL and release gate exam
 - Turn a Gemma 4 answer into a WAV file with [Ollama and Phonon](examples/07-ollama-gemma4-phonon-speech.yaml).
 - Route a Rust source triage report from a [local Ollama model](examples/08-ollama-local-pr-triage.yaml).
 - Fetch a REST endpoint with retries and write validated JSONL through an [atomic pipe](examples/09-generic-http-api-pipeline.yaml).
+- Turn a local voiceover into a waveform or recording MP4 with the [YouTube capsule generator](examples/10-youtube-capsule-generator.yaml).
 
 ### Stream local speech with Ollama and Phonon
+
+The pronunciation clip linked next to the title ([MP4](assets/stdo-pronunciation.mp4)) is generated end-to-end by running [examples/10-youtube-capsule-generator.yaml](examples/10-youtube-capsule-generator.yaml) via `scripts/generate-pronunciation-asset.sh` (local Gemma 4 → Phonon TTS → FFmpeg).
 
 Gradium’s Phonon family streams speech as it generates it. Ollama’s `phonon:latest` uses the 31M English checkpoint and selects the `default` voice when you omit `--voice`. These commands use the Phonon package for Apple Silicon and Ollama 0.40.9 or later. [Gradium models](https://huggingface.co/gradium) · [Phonon 31M English](https://huggingface.co/gradium/phonon-31m-en) · [Ollama speech guide](https://docs.ollama.com/capabilities/speech)
 
@@ -305,8 +308,9 @@ stdo serve -f examples/03-release-gate-switch.yaml --port 8080
 Open [Studio](http://127.0.0.1:8080) in your browser. With no file argument, Studio selects `stdo.yaml` if present, then the first YAML file from the working directory or `examples/`. Studio binds to IPv4 loopback and serves the editor from the binary.
 
 - Drag nodes to arrange them. Connect output and input ports to add pipe, template, or switch links. Click an edge to remove it.
-- Use **Edit** to configure workflow inputs and steps, or use **YAML** to edit the same draft as text. **Validate (Doctor)** checks the draft. **Save YAML** validates the DAG and atomically writes it inside the working directory.
-- Use **Run Workflow** to execute the draft with optional input overrides and cache bypass. Studio streams node states and a bounded stdout preview over SSE, then shows workflow output, timings, cache hits, and the PID ledger on failure.
+- The inspector has four tabs: **Requirements** lists executable availability, local model hints, and workflow inputs; **Edit** configures inputs and steps; **YAML** edits the same draft as text; **Run inspector** shows live output and telemetry.
+- **Validate (Doctor)** checks the draft. **Save** validates and atomically updates the current file; **Save As…** chooses a new workspace path.
+- Use **Run Workflow** to execute the draft with optional input overrides and cache bypass. Studio streams node states and a bounded stdout preview over SSE, then shows workflow output, timings, cache hits, and the PID ledger on failure. Inline `<audio>` and `<video>` artifact players let you listen to WAV output and watch MP4 output, with download links alongside them.
 - Studio reloads external file edits when the draft is clean and flags conflicts when you have unsaved changes.
 
 ## Roadmap
