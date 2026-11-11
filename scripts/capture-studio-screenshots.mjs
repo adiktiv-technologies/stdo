@@ -66,6 +66,27 @@ try {
   const openLinks = page.locator('#nodes-layer').getByRole('button', { name: 'Open ↗' });
   await openLinks.nth(1).waitFor();
   assert.equal(await openLinks.count(), 2);
+  for (const width of [1280, 1440, 1600]) {
+    await page.setViewportSize({ width, height: 900 });
+    const layout = await page.evaluate(() => {
+      const controls = [...document.querySelectorAll('#toolbar .brand, #toolbar select, #toolbar button')];
+      const boxes = controls.map(control => control.getBoundingClientRect());
+      const tables = [...document.querySelectorAll('#requirements table')];
+      const pane = document.querySelector('#requirements');
+      return {
+        toolbarFits: boxes.every(box => box.left >= 0 && box.right <= window.innerWidth),
+        oneRow: boxes.every(box => Math.abs(box.top + box.height / 2 - boxes[0].top - boxes[0].height / 2) <= 1),
+        helpIsLast: controls.at(-1).id === 'help',
+        tablesFit: pane.scrollWidth <= pane.clientWidth + 1 &&
+          tables.every(table => table.scrollWidth <= table.clientWidth + 1),
+      };
+    });
+    assert.deepEqual(layout, { toolbarFits: true, oneRow: true, helpIsLast: true, tablesFit: true },
+      `Studio layout at ${width}px`);
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.getByText('🔗 01-parallel-repo-audit.yaml', { exact: true }).waitFor();
+  await page.getByText('🔗 06-jsonl-sensor-stream.yaml', { exact: true }).waitFor();
   await page.mouse.move(0, 0);
   await capture(page, 'studio-overview-subworkflows');
 

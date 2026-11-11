@@ -11,14 +11,11 @@ A compact, zero-network Rust binary that orchestrates local CLI tools (`curl`, `
 [![Network: 100% Offline](https://img.shields.io/badge/network-zero_outbound_calls-success.svg)](#architecture--core-concepts)
 [![Rust](https://img.shields.io/badge/edition-2021-orange.svg)](https://github.com/adiktiv-technologies/stdo/blob/main/Cargo.toml)
 
-[**Quickstart**](#quickstart) • [**What is a Unix DAG?**](#what-is-a-unix-dag) • [**Embedded Studio (`stdo serve`)**](#embedded-studio-stdo-serve) • [**Roadmap**](#roadmap)
+[**Quickstart**](#quickstart) • [**What is a Unix DAG?**](#what-is-a-unix-dag) • [**Embedded Studio (`stdo serve`)**](#embedded-studio-stdo-serve) • [**Gallery**](examples/README.md)
 
 </div>
 
 ![stdo Studio showing two sub-workflows, their combined report step, and the Requirements inspector](https://raw.githubusercontent.com/adiktiv-technologies/stdo/main/assets/studio-overview-subworkflows.png)
-
-> [!NOTE]
-> Phases 1 through 5 are complete. See the Crates.io badge above for the current version and the [changelog](CHANGELOG.md) for release details.
 
 ## Why `stdo`?
 
@@ -316,46 +313,11 @@ Open [Studio](http://127.0.0.1:8080) in your browser. With no file argument, Stu
 
 - Drag nodes to arrange them. Connect output and input ports to add pipe, template, or switch links. Click an edge to remove it.
 - **+ Command Step** opens a searchable catalog of 40 presets across Basics, Files & Data, HTTP & API, Ollama, DSCR, AWS, GCP, Media, and Sub-Workflows. Select a saved child workflow and configure its input overrides visually. Presets are editable starting points; external tools, credentials, models, and capsules must be installed or configured separately. External network access is performed by those tools, not by the orchestrator.
-- Direct `stdo run -f child.yaml` commands receive a **🔗 Sub-workflow** badge and **Open ↗** link. Doctor and Requirements recursively inspect child workflows, merge CLI/model requirements, and reject YAML call cycles. File paths use the process working directory; keep referenced YAML files inside the workspace. Static validation is bounded to 16 nested files and 64 calls and cannot expand shell wrappers or arguments generated from runtime step outputs.
+- Direct `stdo run -f child.yaml` commands receive a **🔗 filename** badge and **Open ↗** link. Doctor and Requirements recursively inspect child workflows, merge CLI/model requirements, and reject YAML call cycles. File paths use the process working directory; keep referenced YAML files inside the workspace. Static validation is bounded to 16 nested files and 64 calls and cannot expand shell wrappers or arguments generated from runtime step outputs.
 - The inspector has four tabs: **Requirements** lists executable availability, local model hints, and workflow inputs; **Edit** configures inputs and steps; **YAML** edits the same draft as text; **Run inspector** shows live output and telemetry.
-- **Validate (Doctor)** checks the draft. **Save** validates and atomically updates the current file; **Save As…** chooses a new workspace path.
-- Use **Run Workflow** to execute the draft with optional input overrides and cache bypass. Studio streams node states and a bounded stdout preview over SSE, then shows workflow output, timings, cache hits, and the PID ledger on failure. Inline `<audio>` and `<video>` artifact players let you listen to WAV output and watch MP4 output, with download links alongside them.
+- **Validate** checks the draft. **Save** validates and atomically updates the current file; **Save As…** chooses a new workspace path.
+- Use **▶ Run** to execute the draft with optional input overrides and cache bypass. Studio streams node states and a bounded stdout preview over SSE, then shows workflow output, timings, cache hits, and the PID ledger on failure. Inline `<audio>` and `<video>` artifact players let you listen to WAV output and watch MP4 output, with download links alongside them.
 - Studio reloads external file edits when the draft is clean and flags conflicts when you have unsaved changes.
-
-## Roadmap
-
-### Phase 1 — Foundation (`v0.0.x` → `v0.1.0`)
-
-- [x] Crate reservation & baseline CLI (`stdo`).
-- [x] Topological DAG parser (`stdo.yaml`), cycle detector, and `stdo doctor` binary verifier.
-- [x] Buffered `minijinja` stdin templates and monitored `pipe_from` transfers.
-- [x] Parallel execution within each topological layer via `tokio::process`.
-- [x] Self-contained POSIX workflow gallery in `examples/` (fan-out, `pipe_from`, JSON switch routing).
-
-### Phase 2 — Caching & Embedded Studio (`v0.2.0`)
-
-- [x] SHA-256 Content-Addressable Storage (CAS) for command steps in `.stdo/cache/`.
-- [x] `stdo serve` loopback HTTP server with a single embedded HTML/CSS/JS editor and SVG canvas.
-- [x] Workflow file editing, validation, execution, and per-step telemetry in Studio.
-
-### Phase 3 — Industrial Benchmarking & Streaming (`v0.3.0`)
-
-- [x] Live Studio output streaming over server-sent events (SSE) and workflow file reload.
-- [x] `stdo bench` A/B/C comparisons with latency percentiles, TTFB, cache hit ratios, and peak monitored buffer usage.
-- [x] Continuous JSONL line-by-line validation and routing for sensor and log pipelines.
-- [x] Offline HTML/JSON execution audits and benchmark reports.
-
-### Phase 4 — Concurrent Streaming & Production Resilience (`v0.4.0`)
-
-- [x] True concurrent producer-consumer streaming across `pipe_from` chains with overlapping upstream execution and downstream TTFB.
-- [x] Step-level `timeout_ms`, retry with backoff, and hermetic cache dependencies (`cache_files` / `cache_env`).
-
-### Phase 5 — Unbounded Streaming, Atomic Pipes & Qualification (`v0.5.0`)
-
-- [x] Bounded-memory pass-through for arbitrarily long stdout streams.
-- [x] Atomic pipe gating and Unix process-group cleanup.
-- [x] SHA-256 executable content hashing for cache invalidation.
-- [x] Adversarial stream tests and a reproducible [benchmark suite](benchmarks/README.md).
 
 ## License
 
