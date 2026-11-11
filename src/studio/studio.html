@@ -85,6 +85,10 @@ main{display:grid;grid-template-columns:minmax(0,1fr) minmax(320px,29vw);height:
 .catalog-list{padding-right:5px}
 .catalog-preset{display:block;text-align:left;width:100%;margin-bottom:5px}
 .catalog-preset code{display:block;font-size:11px;color:var(--muted);margin-top:3px}
+.catalog-banner ~ .catalog-preset{padding:6px 9px}
+.catalog-banner ~ .catalog-preset code{display:none}
+#studio-dialog .catalog-detail h3{margin-top:0}
+.catalog-inputs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:10px}
 .catalog-error{color:var(--error);margin:4px 0;min-height:1.3em}
 .catalog-banner{padding:10px;border-left:2px solid var(--pipe);margin:0 0 10px;font-size:12px}
 .catalog-banner a{color:var(--pipe)}
@@ -92,7 +96,7 @@ main{display:grid;grid-template-columns:minmax(0,1fr) minmax(320px,29vw);height:
 .subworkflow-badge button{white-space:nowrap;font-size:11px;padding:3px 5px}
 @media(max-width:650px){
   .catalog-layout{grid-template-columns:1fr;grid-template-rows:minmax(0,1fr) minmax(0,1fr)}
-  .catalog-metadata{grid-template-columns:1fr}
+  .catalog-metadata,.catalog-inputs{grid-template-columns:1fr}
 }
 .node .subworkflow-badge{margin:4px 7px;padding:4px 5px}.node .subworkflow-badge span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 </style>
@@ -1126,8 +1130,16 @@ async function openCommandCatalog() {
     },'primary');
     const actions=element('div',undefined,'dialog-actions');actions.append(button('Cancel',()=>close(false)),add);
     function preview() {
-      const code=detail.querySelector('pre');
-      if (code) code.textContent=JSON.stringify(makeCatalogStep(selected,id.value,name.value,subpath,overrides),null,2);
+      const code = detail.querySelector('pre');
+      if (!code) return;
+      const step = makeCatalogStep(selected,id.value,name.value,subpath,overrides);
+      if (selected.category === 'Sub-Workflows') {
+        const lines = Object.entries(step).map(([key,value]) =>
+          '  ' + JSON.stringify(key) + ': ' + JSON.stringify(value));
+        code.textContent = '{\n' + lines.join(',\n') + '\n}';
+      } else {
+        code.textContent = JSON.stringify(step,null,2);
+      }
     }
     async function loadSubInputs(path) {
       const seq=++request;loading=true;add.disabled=true;subpath='';inputSchema={};overrides=Object.create(null);error.textContent='';
