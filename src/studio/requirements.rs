@@ -132,3 +132,76 @@ pub(super) fn summary(workflow: &Workflow, overrides: &[String]) -> Value {
     json!({"binaries":binaries,"models":models,"model_details":model_details,"inputs":inputs,
         "note":"Shell tools are detected heuristically. Model names are hints; local model availability is not probed."})
 }
+
+pub(super) fn recursive(
+    workflow: &Workflow,
+    overrides: &[String],
+    root: &std::path::Path,
+    source: Option<&std::path::Path>,
+) -> Value {
+    let mut result = summary(workflow, overrides);
+    match crate::doctor::subworkflows::collect(workflow, root, source, overrides, false) {
+        Ok(children) => {
+            let mut paths = BTreeSet::new();
+            for child in children {
+                let path = child
+                    .path
+                    .strip_prefix(root)
+                    .unwrap_or(&child.path)
+                    .display()
+                    .to_string();
+                paths.insert(path.clone());
+                let nested = summary(&child.workflow, &child.inputs);
+                for entry in nested["binaries"].as_array().expect("binaries") {
+                    let entries = result["binaries"].as_array_mut().expect("binaries");
+                    let origin = json!(format!("sub-workflow ({path})"));
+                    if let Some(existing) = entries
+                        .iter_mut()
+                        .find(|item| item["name"] == entry["name"])
+                    {
+                        let sources = existing["sources"].as_array_mut().expect("sources");
+                        if !sources.contains(&origin) {
+                            sources.push(origin);
+                        }
+                    } else {
+                        let mut entry = entry.clone();
+                        entry["sources"] = json!([origin]);
+                        entries.push(entry);
+                    }
+                }
+                for entry in nested["model_details"].as_array().expect("model_details") {
+                    let entries = result["model_details"]
+                        .as_array_mut()
+                        .expect("model_details");
+                    let origin = json!(format!("sub-workflow ({path})"));
+                    if let Some(existing) = entries
+                        .iter_mut()
+                        .find(|item| item["name"] == entry["name"])
+                    {
+                        let refs = existing["references"].as_array_mut().expect("references");
+                        if !refs.contains(&origin) {
+                            refs.push(origin);
+                        }
+                    } else {
+                        entries.push(json!({"name":entry["name"],"references":[origin]}));
+                    }
+                }
+            }
+            result["subworkflows"] = json!(paths);
+        }
+        Err(error) => result["error"] = json!(error.to_string()),
+    }
+    result["binaries"]
+        .as_array_mut()
+        .expect("binaries")
+        .sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
+    let mut models: Vec<_> = result["model_details"]
+        .as_array()
+        .expect("models")
+        .iter()
+        .map(|item| item["name"].clone())
+        .collect();
+    models.sort_by(|a, b| a.as_str().cmp(&b.as_str()));
+    result["models"] = json!(models);
+    result
+}

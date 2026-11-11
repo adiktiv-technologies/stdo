@@ -55,13 +55,25 @@ async fn dispatch(
     match command {
         Command::Doctor { file, force } => {
             let workflow = Workflow::read(file.path())?;
-            let graph = doctor::check_with_force(&workflow, force)?;
+            let (graph, models) = doctor::inspect_in_workspace(
+                &workflow,
+                &std::env::current_dir().map_err(Error::Studio)?,
+                Some(file.path()),
+                &[],
+                force,
+            )?;
             println!(
                 "{}: {} steps in {} layers, required executables available",
                 workflow.name,
                 workflow.steps.len(),
                 graph.layers.len()
             );
+            if !models.is_empty() {
+                println!(
+                    "Local Ollama models (availability not probed): {}",
+                    models.into_iter().collect::<Vec<_>>().join(", ")
+                );
+            }
         }
         Command::Run {
             file,

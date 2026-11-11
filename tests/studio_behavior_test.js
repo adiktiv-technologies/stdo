@@ -112,3 +112,82 @@ test('requirements render three tables with statuses and metadata',() => {
     assert.ok(text.includes(value),value);
   }
 });
+
+function catalogHarness() {
+  class Element {
+    constructor(tag,text='',cls='') {this.tag=tag;this.text=text;this.cls=cls;this.children=[];this.value='';this.listeners={};this.attrs={};this.classList={add(){},remove(){}};}
+    append(...nodes) {this.children.push(...nodes);}
+    replaceChildren(...nodes) {this.children=nodes;}
+    setAttribute(name,value) {this.attrs[name]=value;}
+    addEventListener(name,fn) {this.listeners[name]=fn;}
+    focus() {}
+    walk() {return [this,...this.children.flatMap(node=>node.walk())];}
+    querySelector(selector) {return this.walk().find(node=>selector[0]==='.' ? node.cls===selector.slice(1) : node.tag===selector);}
+  }
+  const dialog=new Element('dialog');dialog.open=true;
+  const state={workflow:{steps:[]}};
+  const requests=[];
+  const context=vm.createContext({state,queueMicrotask,
+    element:(...args)=>new Element(...args),
+    button:(text,click,cls)=>Object.assign(new Element('button',text,cls),{click}),
+    field:(label,control)=>{const node=new Element('label',label);node.append(control);return node;},
+    modal:(title,build)=>new Promise(resolve=>{dialog.text=title;build(dialog,value=>{dialog.open=false;resolve(value);});}),
+    editAllowed:()=>true,currentStep:id=>state.workflow.steps.find(step=>step.id===id),
+    changed:()=>{},tab:()=>{},fileUrl:path=>'/api/workflow?path='+path,
+    api:async path=>{requests.push(path);return path==='/api/files' ? {workflows:['nested/child.yaml']} : {workflow:{inputs:{topic:{type:'string'}}}};},
+  });
+  const code=html.slice(html.indexOf('const CATALOG_CATEGORIES'),html.indexOf('function addStep(kind)'));
+  vm.runInContext(code,context);
+  return {dialog,state,requests,run:source=>vm.runInContext(source,context)};
+}
+const settleCatalog=()=>new Promise(resolve=>setImmediate(resolve));
+
+test('catalog tabs filter presets and insert an editable DSCR command',async () => {
+  const {dialog,state,run}=catalogHarness();
+  assert.ok(run('commandPresets().length') >= 35);
+  const modal=run('openCommandCatalog()');
+  await settleCatalog();
+  assert.equal(dialog.text,'Add Command Step');
+  const tab=name=>dialog.walk().find(node=>node.tag==='button' && node.text.endsWith(name) && node.attrs['aria-pressed']!==undefined);
+  const rows=()=>dialog.walk().filter(node=>node.cls==='catalog-preset');
+  for (const [name,binary] of [['AWS','aws'],['GCP','gcloud'],['Ollama','ollama'],['DSCR','dscr']]) {
+    tab(name).click();
+    assert.ok(rows().length>=3);
+    assert.ok(rows().some(row=>row.children[0].text===binary));
+  }
+  assert.equal(dialog.querySelector('.catalog-banner').hidden,false);
+  const search=dialog.walk().find(node=>node.type==='search');
+  search.value='safeguard';search.listeners.input();
+  assert.equal(rows().length,1);
+  rows()[0].click();
+  await settleCatalog();
+  dialog.walk().find(node=>node.text==='Step ID').children[0].value='gate';
+  dialog.walk().find(node=>node.text==='Step Name').children[0].value='Policy gate';
+  dialog.walk().find(node=>node.tag==='button' && node.text==='Add Command Step').click();
+  await modal;
+  assert.equal(state.workflow.steps[0].id,'gate');
+  assert.equal(state.workflow.steps[0].name,'Policy gate');
+  assert.equal(state.workflow.steps[0].cmd.join(' '),'dscr filter --capsule ./policy.nex --format json');
+  assert.equal(state.workflow.steps[0].parse_stdout,'json');
+});
+
+test('sub-workflow catalog loads files and serializes visual input overrides',async () => {
+  const {dialog,state,requests,run}=catalogHarness();
+  const modal=run('openCommandCatalog()');
+  await settleCatalog();
+  dialog.walk().find(node=>node.text==='🔗 Sub-Workflows').click();
+  assert.equal(dialog.walk().filter(node=>node.cls==='catalog-preset').length,1);
+  const select=dialog.querySelector('select');
+  assert.ok(select.children.some(option=>option.value==='nested/child.yaml'));
+  select.value='nested/child.yaml';select.listeners.change();
+  await settleCatalog();
+  const add=dialog.walk().find(node=>node.tag==='button' && node.text==='Add Command Step');
+  add.click();
+  assert.equal(state.workflow.steps.length,0);
+  const override=dialog.walk().find(node=>node.attrs['aria-label']==='Override topic');
+  override.value='pipes = data';override.listeners.input();
+  add.click();await modal;
+  assert.equal(JSON.stringify(state.workflow.steps[0].cmd),JSON.stringify(['stdo','run','-f','nested/child.yaml','-i','topic=pipes = data']));
+  assert.deepEqual(requests,['/api/files','/api/workflow?path=nested/child.yaml']);
+  assert.equal(run('subworkflowPath(state.workflow.steps[0])'),'nested/child.yaml');
+});

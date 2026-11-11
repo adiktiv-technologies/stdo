@@ -110,3 +110,14 @@ stdo doctor -f examples/10-youtube-capsule-generator.yaml
 stdo run -f examples/10-youtube-capsule-generator.yaml -i topic='How Unix pipes work'
 stdo serve -f examples/10-youtube-capsule-generator.yaml
 ```
+
+## 11 · Composable sub-workflows
+
+[11-composable-subworkflows.yaml](11-composable-subworkflows.yaml) runs examples 01 and 06 in parallel as ordinary `stdo run` command steps, then combines their captured text into one report. Put the `stdo` binary on `PATH` and run from the repository root. Child file paths and file inputs resolve from that same working directory, not from the parent YAML's directory.
+
+```sh
+stdo doctor -f examples/11-composable-subworkflows.yaml
+stdo run -f examples/11-composable-subworkflows.yaml
+```
+
+Doctor recursively checks direct `stdo run -f` / `--file` calls and rejects missing files, files outside the workspace, and circular call chains. Studio merges child requirements and provides **Open ↗** links. Child inputs can be supplied with ordinary `-i key=value` arguments or configured visually in the **Sub-Workflows** catalog tab. Child processes have their own memory budgets, caches, telemetry, and PID ledgers; these are not one shared in-process execution graph.

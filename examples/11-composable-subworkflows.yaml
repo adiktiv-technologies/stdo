@@ -1,0 +1,17 @@
+version: "1.0"
+name: composable-subworkflows
+description: Run the repository audit and JSONL sensor workflow in parallel, then combine their reports.
+steps:
+  - id: repository_audit
+    cmd: [stdo, run, -f, examples/01-parallel-repo-audit.yaml]
+  - id: sensor_stream
+    cmd: [stdo, run, -f, examples/06-jsonl-sensor-stream.yaml]
+  - id: unified_report
+    cmd: [cat]
+    stdin: |
+      # Unified sub-workflow report
+      ## Repository audit
+      {{ steps.repository_audit.stdout | trim }}
+      ## Sensor stream
+      {{ steps.sensor_stream.stdout | trim }}
+output: '{{ steps.unified_report.stdout }}'
