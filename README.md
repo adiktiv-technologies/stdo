@@ -86,7 +86,7 @@ Set `pipe_mode: atomic` on a `pipe_from` consumer to start it only after the cap
 
 Set `parse_stdout: jsonl` to validate each non-empty JSON Lines record as stdout arrives. The runner compacts each record, ignores blank lines, and forwards complete records to live `pipe_from` consumers. An invalid record fails the producer with its line number. Templates and switches can use `steps.<id>.json | length` or index a record with `steps.<id>.json[0]`. Try [the JSONL sensor example](examples/06-jsonl-sensor-stream.yaml).
 
-By default, `run` and `doctor` allow up to 64 steps, 16 layers, and 16 steps per layer. Use `--force` to bypass these graph limits. Captured streams have an 8 MiB limit each, with a shared 32 MiB budget for captured data, pipe buffers, and rendered I/O buffers. On failure, `stdo run` prints the PID and last known status of each direct child it started.
+By default, `run` and `doctor` allow up to 64 steps, 16 layers, and 16 steps per layer. Captured streams have an 8 MiB limit each, with a shared 32 MiB budget for captured data, pipe buffers, and rendered I/O buffers. On failure, `stdo run` prints the PID and last known status of each direct child it started.
 
 Use `{{ inputs.key }}` in command arguments and pass step output through `stdin` templates or `pipe_from`. The workflow's `output` template determines what `stdo run` writes to stdout.
 
@@ -185,11 +185,11 @@ stdo doctor -f examples/01-parallel-repo-audit.yaml
 # Run it headlessly from the repository root
 stdo run -f examples/01-parallel-repo-audit.yaml
 
-# Keep the workflow output on stdout and write telemetry to stderr
-stdo run -t -f examples/01-parallel-repo-audit.yaml
+# Supervise repeated passes in the terminal
+stdo top -f examples/01-parallel-repo-audit.yaml
 ```
 
-See the [workflow gallery](examples/README.md) for the ETL and release gate examples.
+See the [CLI Reference](#cli-reference) for commands, options and defaults. See the [workflow gallery](examples/README.md) for the ETL and release gate examples.
 
 - Turn a Gemma 4 answer into a WAV file with [Ollama and Phonon](examples/07-ollama-gemma4-phonon-speech.yaml).
 - Route a Rust source triage report from a [local Ollama model](examples/08-ollama-local-pr-triage.yaml).
@@ -268,15 +268,7 @@ output: |
 
 ### Benchmark workflows and export audit reports
 
-```sh
-stdo run -f examples/03-release-gate-switch.yaml -i severity=LOW --report audit.json
-stdo bench examples/01-parallel-repo-audit.yaml examples/02-monitored-pipe-etl.yaml \
-  --runs 5 --warmup 1 --no-cache --report comparison.html
-```
-
-`run --report` keeps workflow stdout available for piping and writes the audit to a separate file, including partial results when a readable workflow fails. It records the resolved inputs, SHA-256 hashes of the original YAML and captured stdout, and per-step timings and byte counts. Reports contain resolved input values, so treat them as sensitive if the workflow takes secrets. Use `.html` or `.htm` for a self-contained report, or another extension for JSON.
-
-`bench` accepts one or more workflows and compares them against the first workflow's median latency. It runs one warmup and five measured trials per workflow by default. The table reports min, mean, p50, p95, max, mean TTFB, peak monitored bytes, and cache hit ratio, plus per-step mean and p95. Percentiles use linear interpolation, and the cache ratio is the number of hits divided by all recorded steps. Pass `-i KEY=VALUE` for an override shared by the workflows. Cached steps can reuse results during warmup and measurement. Pass `--no-cache` to measure subprocess execution on every trial. HTML benchmark reports include four inline charts.
+Execution audits record resolved inputs, output hashes and per-step timings, including partial results after a failure. Reports may contain sensitive input values. Benchmark comparisons use the first workflow as the baseline and report latency percentiles, peak monitored bytes and cache hit ratios.
 
 Step TTFB measures from spawn to the first stdout chunk, or the read duration on a cache hit. Workflow TTFB is elapsed time to the first stdout from any step, with total duration as the fallback for a silent run. Benchmarks load each workflow once before its trials.
 
@@ -318,6 +310,120 @@ Open [Studio](http://127.0.0.1:8080) in your browser. With no file argument, Stu
 - **Validate** checks the draft. **Save** validates and atomically updates the current file; **Save As…** chooses a new workspace path.
 - Use **▶ Run** to execute the draft with optional input overrides and cache bypass. Studio streams node states and a bounded stdout preview over SSE, then shows workflow output, timings, cache hits, and the PID ledger on failure. Inline `<audio>` and `<video>` artifact players let you listen to WAV output and watch MP4 output, with download links alongside them.
 - Studio reloads external file edits when the draft is clean and flags conflicts when you have unsaved changes.
+
+## CLI Reference
+
+<!-- BEGIN_CLI_REFERENCE -->
+
+```text
+Standard I/O Orchestrator
+
+Usage: stdo <COMMAND>
+
+Commands:
+  run     Execute a workflow DAG
+  top     Execute repeated passes and display live DAG statistics on stderr
+  bench   Compare the performance of one or more workflows
+  serve   Launch the offline Studio UI on 127.0.0.1
+  doctor  Validate the workflow DAG and check required executables
+  help    Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
+```
+
+### `stdo run`
+
+```text
+Execute a workflow DAG
+
+Usage: stdo run [OPTIONS] [FILE]
+
+Arguments:
+  [FILE]  Workflow file (defaults to stdo.yaml)
+
+Options:
+  -f, --file <FILE>        Workflow file, as an alternative to the positional argument
+  -i, --input <KEY=VALUE>  Override a workflow input (repeatable)
+  -t, --telemetry          Report workflow timings and monitored buffer usage on stderr
+      --no-cache           Bypass reading and writing the step cache
+      --report <PATH>      Write an offline JSON or HTML execution audit
+      --force              Bypass graph size limits
+  -h, --help               Print help
+```
+
+### `stdo top`
+
+```text
+Execute repeated passes and display live DAG statistics on stderr
+
+Usage: stdo top [OPTIONS] [FILE]
+
+Arguments:
+  [FILE]  Workflow file (defaults to stdo.yaml)
+
+Options:
+  -f, --file <FILE>        Workflow file, as an alternative to the positional argument
+  -i, --input <KEY=VALUE>  Override a workflow input (repeatable)
+      --no-cache           Bypass reading and writing the step cache
+      --force              Bypass graph size limits
+      --interval <MS>      Delay between completed passes in milliseconds [default: 1000]
+  -h, --help               Print help
+```
+
+### `stdo bench`
+
+```text
+Compare the performance of one or more workflows
+
+Usage: stdo bench [OPTIONS] <FILES>...
+
+Arguments:
+  <FILES>...  Workflow files in comparison order (baseline first)
+
+Options:
+      --runs <RUNS>        Measured trials per workflow [default: 5]
+      --warmup <WARMUP>    Warmup trials per workflow [default: 1]
+  -i, --input <KEY=VALUE>  Override an input for all workflows (repeatable)
+      --no-cache           Bypass reading and writing the step cache
+      --report <PATH>      Write an offline JSON or HTML benchmark comparison
+  -h, --help               Print help
+```
+
+### `stdo serve`
+
+```text
+Launch the offline Studio UI on 127.0.0.1
+
+Usage: stdo serve [OPTIONS] [FILE]
+
+Arguments:
+  [FILE]  Workflow file (defaults to stdo.yaml)
+
+Options:
+  -f, --file <FILE>  Workflow file, as an alternative to the positional argument
+      --port <PORT>  TCP port for the loopback listener [default: 8080]
+  -h, --help         Print help
+```
+
+### `stdo doctor`
+
+```text
+Validate the workflow DAG and check required executables
+
+Usage: stdo doctor [OPTIONS] [FILE]
+
+Arguments:
+  [FILE]  Workflow file (defaults to stdo.yaml)
+
+Options:
+  -f, --file <FILE>  Workflow file, as an alternative to the positional argument
+      --force        Bypass graph size limits
+  -h, --help         Print help
+```
+
+<!-- END_CLI_REFERENCE -->
 
 ## License
 

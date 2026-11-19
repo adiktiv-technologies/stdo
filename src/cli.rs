@@ -47,6 +47,7 @@ pub enum Command {
     Run {
         #[command(flatten)]
         file: WorkflowFile,
+        /// Override a workflow input (repeatable).
         #[arg(short, long, value_name = "KEY=VALUE")]
         input: Vec<String>,
         /// Report workflow timings and monitored buffer usage on stderr.
@@ -62,14 +63,35 @@ pub enum Command {
         #[arg(long)]
         force: bool,
     },
+    /// Execute repeated passes and display live DAG statistics on stderr.
+    Top {
+        #[command(flatten)]
+        file: WorkflowFile,
+        /// Override a workflow input (repeatable).
+        #[arg(short, long, value_name = "KEY=VALUE")]
+        input: Vec<String>,
+        /// Bypass reading and writing the step cache.
+        #[arg(long)]
+        no_cache: bool,
+        /// Bypass graph size limits.
+        #[arg(long)]
+        force: bool,
+        /// Delay between completed passes in milliseconds.
+        #[arg(long, value_name = "MS", default_value_t = 1000)]
+        interval: u64,
+    },
     /// Compare the performance of one or more workflows.
     Bench {
+        /// Workflow files in comparison order (baseline first).
         #[arg(required = true, num_args = 1.., value_name = "FILES")]
         files: Vec<PathBuf>,
+        /// Measured trials per workflow.
         #[arg(long, default_value_t = 5)]
         runs: usize,
+        /// Warmup trials per workflow.
         #[arg(long, default_value_t = 1)]
         warmup: usize,
+        /// Override an input for all workflows (repeatable).
         #[arg(short, long, value_name = "KEY=VALUE")]
         input: Vec<String>,
         /// Bypass reading and writing the step cache.
@@ -83,6 +105,7 @@ pub enum Command {
     Serve {
         #[command(flatten)]
         file: WorkflowFile,
+        /// TCP port for the loopback listener.
         #[arg(long, default_value_t = 8080)]
         port: u16,
     },

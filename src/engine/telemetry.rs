@@ -11,6 +11,7 @@ use serde::Serialize;
 
 #[derive(Clone)]
 pub struct Telemetry {
+    pub(crate) monitor: Option<crate::top::Monitor>,
     started: Instant,
     pub(super) budget: Budget,
     records: Arc<Mutex<Records>>,
@@ -22,6 +23,7 @@ pub struct Telemetry {
 impl Default for Telemetry {
     fn default() -> Self {
         Self {
+            monitor: None,
             started: Instant::now(),
             budget: Budget::default(),
             records: Arc::default(),
@@ -235,6 +237,7 @@ impl Telemetry {
 
     pub(super) fn step(&self, layer: usize, index: usize, id: &str) -> StepTimer {
         StepTimer {
+            live: self.monitor.as_ref().map(|monitor| monitor.step(id)),
             telemetry: self.clone(),
             key: (layer, index),
             started: Instant::now(),
@@ -335,6 +338,7 @@ impl Drop for LayerTimer<'_> {
 }
 
 pub(super) struct StepTimer {
+    pub(super) live: Option<Arc<crate::top::LiveStep>>,
     telemetry: Telemetry,
     key: (usize, usize),
     started: Instant,
@@ -374,10 +378,13 @@ impl StepTimer {
         self.record.as_mut().expect("active step").status = status;
     }
 
-    pub(super) fn spawned(&mut self) {
+    pub(super) fn spawned(&mut self, pid: u32) {
         let record = self.record.as_mut().expect("active step");
         record.executed = true;
         record.attempts += 1;
+        if let Some(live) = &self.live {
+            live.spawned(pid, record.attempts);
+        }
         record.ttfb = None;
         record.status = Status::Failed;
     }
