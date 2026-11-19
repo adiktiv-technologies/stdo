@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.6](https://github.com/adiktiv-technologies/stdo/compare/v0.5.5...v0.5.6) - 2026-11-19
+
+### Fixed
+
+- *(studio)* accept case-insensitive byte range units
+
 ## [0.5.5](https://github.com/adiktiv-technologies/stdo/compare/v0.5.4...v0.5.5) - 2026-11-11
 
 ### Fixed
