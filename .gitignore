@@ -30,4 +30,5 @@ docs
 
 # Local AI agent configuration
 .claude/
+.agents/
 AGENTS.md
