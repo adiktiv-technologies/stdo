@@ -44,7 +44,8 @@ jobs:
   studio-screenshots:
     needs: changes
     if: needs.changes.outputs.capture == 'true'
-    runs-on: ubuntu-latest
+    # Keep the runner compatible with the Playwright version in the capture script.
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5

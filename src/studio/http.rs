@@ -303,7 +303,11 @@ impl Request {
 }
 
 fn byte_range(value: &str, size: u64) -> Option<(u64, u64)> {
-    let (start, end) = value.strip_prefix("bytes=")?.split_once('-')?;
+    let (unit, bounds) = value.split_once('=')?;
+    if !unit.eq_ignore_ascii_case("bytes") {
+        return None;
+    }
+    let (start, end) = bounds.split_once('-')?;
     let last = size.checked_sub(1)?;
     if start.is_empty() {
         let suffix: u64 = end.parse().ok()?;

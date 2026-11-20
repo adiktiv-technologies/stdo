@@ -161,7 +161,7 @@ fn studio_serves_mp4_byte_ranges() {
         "GET",
         "/api/artifact?path=capsule.mp4",
         None,
-        "Range: bytes=4-11\r\n",
+        "Range: Bytes=4-11\r\n",
     );
     let mut response = String::new();
     socket.read_to_string(&mut response).unwrap();
