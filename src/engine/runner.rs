@@ -125,10 +125,12 @@ impl Running {
                 None => std::future::pending().await,
             }
         };
+        let live = timing.as_deref().and_then(|t| t.live.clone());
+        let input_stats = live.clone();
         let write_input = async move {
             if let Some(input) = self.input {
                 input
-                    .write(stdin)
+                    .write(stdin, input_stats.as_deref())
                     .await
                     .map_err(|error| process_error(step, error))?;
             } else {
@@ -149,6 +151,7 @@ impl Running {
                         loop {
                             let bytes = read_chunk(&mut stdout, &mut chunk, step).await?;
                             if bytes.is_empty() { break; }
+                            if let Some(stats) = &live { stats.output(bytes.len(), self.started); }
                             if let Some(timer) = timing.as_deref() {
                                 first_byte.get_or_insert_with(Instant::now);
                                 if self.stream_stdout {

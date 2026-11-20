@@ -26,6 +26,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Check formatting
         run: cargo fmt --all -- --check
+      - name: Check CLI reference
+        run: ./scripts/update-readme-cli.sh --check
       - name: Run Clippy (strict)
         run: cargo clippy --all-targets -- -D warnings
       - name: Build release binary & check size

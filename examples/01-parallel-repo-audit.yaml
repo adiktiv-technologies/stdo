@@ -2,6 +2,9 @@ version: "1.0"
 name: parallel-repo-audit
 
 inputs:
+  delay_seconds:
+    type: number
+    default: 0
   target_dir:
     type: path
     default: ./examples
@@ -15,6 +18,7 @@ steps:
       - sh
       - -c
       - |
+        if [ "$2" != 0 ]; then sleep "$2" || exit 2; fi
         if [ "$1" = ./examples ] && [ ! -d "$1" ] && [ -f ./01-parallel-repo-audit.yaml ]; then
           set -- .
         fi
@@ -26,6 +30,7 @@ steps:
         printf '%s\n' "$count"
       - stdo
       - "{{ inputs.target_dir }}"
+      - "{{ inputs.delay_seconds }}"
   - id: count_lines
     cmd:
       - sh

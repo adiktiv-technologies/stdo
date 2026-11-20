@@ -66,6 +66,8 @@ pub enum Error {
         path: PathBuf,
         source: io::Error,
     },
+    #[error("terminal: {0}")]
+    Terminal(#[source] io::Error),
     #[error("Studio: {0}")]
     Studio(#[source] io::Error),
     #[error("could not write report {path:?}: {source}")]
