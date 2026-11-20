@@ -185,7 +185,7 @@ stdo doctor -f examples/01-parallel-repo-audit.yaml
 # Run it headlessly from the repository root
 stdo run -f examples/01-parallel-repo-audit.yaml
 
-# Supervise repeated passes in the terminal
+# Inspect a pass in the terminal, then press r to reload or q to quit
 stdo top -f examples/01-parallel-repo-audit.yaml
 ```
 
@@ -322,7 +322,7 @@ Usage: stdo <COMMAND>
 
 Commands:
   run     Execute a workflow DAG
-  top     Execute repeated passes and display live DAG statistics on stderr
+  top     Monitor one DAG pass on stderr, then hold the result until r or q
   bench   Compare the performance of one or more workflows
   serve   Launch the offline Studio UI on 127.0.0.1
   doctor  Validate the workflow DAG and check required executables
@@ -356,7 +356,7 @@ Options:
 ### `stdo top`
 
 ```text
-Execute repeated passes and display live DAG statistics on stderr
+Monitor one DAG pass on stderr, then hold the result until r or q
 
 Usage: stdo top [OPTIONS] [FILE]
 
@@ -368,7 +368,9 @@ Options:
   -i, --input <KEY=VALUE>  Override a workflow input (repeatable)
       --no-cache           Bypass reading and writing the step cache
       --force              Bypass graph size limits
-      --interval <MS>      Delay between completed passes in milliseconds [default: 1000]
+      --watch              Automatically start another pass after each result
+      --interval <MS>      Delay in milliseconds between passes in watch mode [default: 1000]
+      --once               Monitor one pass and exit with its result
   -h, --help               Print help
 ```
 

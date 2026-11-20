@@ -106,6 +106,14 @@ struct Dashboard<'a> {
     graph: Graph,
     interactive: bool,
 }
+struct Screen(bool);
+impl Drop for Screen {
+    fn drop(&mut self) {
+        if self.0 {
+            let _ = io::stderr().write_all(b"\x1b[?25h\x1b[?1049l");
+        }
+    }
+}
 impl Dashboard<'_> {
     fn draw(
         &self,
@@ -124,10 +132,7 @@ impl Dashboard<'_> {
             .max()
             .unwrap_or(0)
             .max(7);
-        let mut out = io::stderr().lock();
-        if self.interactive {
-            write!(out, "\x1b[H\x1b[2J")?;
-        }
+        let mut out = Vec::new();
         writeln!(
             out,
             "Layer {:width$} {:10} {:>7} {:>9} {:>12} {:>10} {:>10} Attempts/Cache",
@@ -190,10 +195,24 @@ impl Dashboard<'_> {
         }
         writeln!(
             out,
-            "DAG {state} | Pass {pass} | Peak Monitored Buffer {} B / 32 MiB | q / Ctrl+C to quit",
+            "DAG {state} | Pass {pass} | Peak Monitored Buffer {} B / 32 MiB | r: reload after pass | q / Ctrl+C: quit",
             report.peak_bytes
         )?;
-        out.flush()
+        let mut stderr = io::stderr().lock();
+        if self.interactive {
+            // Paint over the previous frame. Clearing first exposes a blank screen.
+            let mut frame = Vec::with_capacity(out.len());
+            frame.extend_from_slice(b"\x1b[H");
+            for line in out.split_inclusive(|&byte| byte == b'\n') {
+                frame.extend_from_slice(line.strip_suffix(b"\n").unwrap_or(line));
+                frame.extend_from_slice(b"\x1b[K\r\n");
+            }
+            frame.extend_from_slice(b"\x1b[J");
+            stderr.write_all(&frame)?;
+        } else {
+            stderr.write_all(&out)?;
+        }
+        stderr.flush()
     }
 }
 
@@ -202,21 +221,27 @@ pub async fn run(
     inputs: &[String],
     force: bool,
     no_cache: bool,
-    interval: u64,
+    repeat_delay: Option<u64>,
+    once: bool,
 ) -> Result<(), Error> {
-    let workflow = Workflow::read(path)?;
-    let dashboard = Dashboard {
-        graph: Graph::build_with_force(&workflow, force)?,
-        workflow: &workflow,
-        interactive: io::stderr().is_terminal(),
-    };
     let mut interrupt = signal(SignalKind::interrupt()).map_err(Error::Terminal)?;
     let _terminal = Terminal::open().map_err(Error::Terminal)?;
+    let screen = Screen(io::stderr().is_terminal());
+    if screen.0 {
+        io::stderr()
+            .write_all(b"\x1b[?1049h\x1b[?25l")
+            .map_err(Error::Terminal)?;
+    }
     let (tx, rx) = oneshot::channel();
+    let reload = Arc::new(tokio::sync::Notify::new());
+    let reload_key = reload.clone();
     std::thread::spawn(move || {
         let mut stdin = io::stdin().lock();
         let mut byte = [0];
         while let Ok(1) = stdin.read(&mut byte) {
+            if byte[0] == b'r' {
+                reload_key.notify_one();
+            }
             if byte[0] == b'q' {
                 let _ = tx.send(());
                 break;
@@ -233,6 +258,13 @@ pub async fn run(
     };
     tokio::pin!(quit);
     for pass in 1u64.. {
+        let workflow = Workflow::read(path)?;
+        let dashboard = Dashboard {
+            graph: Graph::build_with_force(&workflow, force)?,
+            workflow: &workflow,
+            interactive: screen.0,
+        };
+
         let monitor = Monitor {
             cancel: watch::channel(false).0,
             steps: Arc::default(),
@@ -282,10 +314,18 @@ pub async fn run(
                 if result.is_ok() { "PASS" } else { "FAIL" },
             )
             .map_err(Error::Terminal)?;
+        if once {
+            return result;
+        }
         if let Err(error) = result {
             eprintln!("stdo: {error}");
         }
-        tokio::select! { _ = &mut quit => return Ok(()), _ = tokio::time::sleep(Duration::from_millis(interval)) => {} }
+        tokio::select! {
+            biased;
+            _ = &mut quit => return Ok(()),
+            _ = reload.notified() => {},
+            _ = tokio::time::sleep(Duration::from_millis(repeat_delay.unwrap_or_default())), if repeat_delay.is_some() => {}
+        }
     }
     Ok(())
 }

@@ -63,7 +63,7 @@ pub enum Command {
         #[arg(long)]
         force: bool,
     },
-    /// Execute repeated passes and display live DAG statistics on stderr.
+    /// Monitor one DAG pass on stderr, then hold the result until r or q.
     Top {
         #[command(flatten)]
         file: WorkflowFile,
@@ -76,9 +76,15 @@ pub enum Command {
         /// Bypass graph size limits.
         #[arg(long)]
         force: bool,
-        /// Delay between completed passes in milliseconds.
+        /// Automatically start another pass after each result.
+        #[arg(long, conflicts_with = "once")]
+        watch: bool,
+        /// Delay in milliseconds between passes in watch mode.
         #[arg(long, value_name = "MS", default_value_t = 1000)]
         interval: u64,
+        /// Monitor one pass and exit with its result.
+        #[arg(long, conflicts_with = "interval")]
+        once: bool,
     },
     /// Compare the performance of one or more workflows.
     Bench {

@@ -5,7 +5,6 @@ edition = "2021"
 description = "⚡ Standard I/O Orchestrator — Zero-network Unix DAG workflow engine in Rust with an embedded Studio UI."
 license = "Apache-2.0"
 repository = "https://github.com/adiktiv-technologies/stdo"
-homepage = "https://github.com/adiktiv-technologies/stdo"
 readme = "README.md"
 keywords = ["workflow", "dag", "orchestrator", "cli", "unix"]
 categories = ["command-line-utilities", "development-tools"]

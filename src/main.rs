@@ -118,7 +118,19 @@ async fn dispatch(
             no_cache,
             force,
             interval,
-        } => stdo::top::run(file.path(), &input, force, no_cache, interval).await?,
+            watch,
+            once,
+        } => {
+            stdo::top::run(
+                file.path(),
+                &input,
+                force,
+                no_cache,
+                watch.then_some(interval),
+                once,
+            )
+            .await?
+        }
         Command::Bench {
             files,
             runs,

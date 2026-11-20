@@ -19,6 +19,7 @@ fn repeated_passes_route_output_and_quit_during_interval() {
             "workflow.yaml",
             "-i",
             "message=hello",
+            "--watch",
             "--interval",
             "20",
             "--no-cache",
@@ -102,4 +103,42 @@ steps:
     fs::remove_dir_all(dir).unwrap();
     assert!(ready && status.success());
     assert!(!survived, "background process outlived the supervisor");
+}
+
+#[test]
+fn completed_pass_holds_until_reload_and_reads_updated_workflow() {
+    let path = std::env::temp_dir().join(format!("stdo-top-reload-{}.yaml", std::process::id()));
+    let workflow = |word: &str| {
+        format!("version: '1.0'\nname: hold\nsteps:\n  - id: say\n    cmd: [echo, {word}]\noutput: '{{{{ steps.say.stdout }}}}'\n")
+    };
+    fs::write(&path, workflow("first")).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_stdo"))
+        .arg("top")
+        .arg(&path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            if tx.send(line).is_err() {
+                break;
+            }
+        }
+    });
+    let wait = Duration::from_secs(5);
+    assert_eq!(rx.recv_timeout(wait).unwrap(), "first");
+    assert_eq!(
+        rx.recv_timeout(Duration::from_millis(1300)),
+        Err(mpsc::RecvTimeoutError::Timeout)
+    );
+    fs::write(&path, workflow("second")).unwrap();
+    child.stdin.as_mut().unwrap().write_all(b"r").unwrap();
+    assert_eq!(rx.recv_timeout(wait).unwrap(), "second");
+    child.stdin.as_mut().unwrap().write_all(b"q").unwrap();
+    assert!(child.wait().unwrap().success());
+    fs::remove_file(path).unwrap();
 }
