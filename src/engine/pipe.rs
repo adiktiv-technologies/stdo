@@ -33,13 +33,17 @@ impl Input {
         }
     }
 
-    pub(super) async fn write(self, mut stdin: impl AsyncWrite + Unpin) -> io::Result<()> {
+    pub(super) async fn write(
+        self,
+        mut stdin: impl AsyncWrite + Unpin,
+        live: Option<&crate::top::LiveStep>,
+    ) -> io::Result<()> {
         let result = match self {
-            Self::Buffered(buffer) => stdin.write_all(buffer.bytes()).await,
+            Self::Buffered(buffer) => write_input(&mut stdin, buffer.bytes(), live).await,
             Self::Live(mut pipe) => {
                 while let Some(packet) = pipe.recv().await {
                     let Some(buffer) = packet else { return Ok(()) };
-                    if let Err(error) = stdin.write_all(buffer.bytes()).await {
+                    if let Err(error) = write_input(&mut stdin, buffer.bytes(), live).await {
                         return ignore_broken_pipe(error);
                     }
                 }
@@ -50,6 +54,25 @@ impl Input {
         };
         result.or_else(ignore_broken_pipe)
     }
+}
+
+async fn write_input(
+    stdin: &mut (impl AsyncWrite + Unpin),
+    mut bytes: &[u8],
+    live: Option<&crate::top::LiveStep>,
+) -> io::Result<()> {
+    let Some(stats) = live else {
+        return stdin.write_all(bytes).await;
+    };
+    while !bytes.is_empty() {
+        let count = stdin.write(bytes).await?;
+        if count == 0 {
+            return Err(io::ErrorKind::WriteZero.into());
+        }
+        stats.input(count);
+        bytes = &bytes[count..];
+    }
+    Ok(())
 }
 
 fn ignore_broken_pipe(error: io::Error) -> io::Result<()> {

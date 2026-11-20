@@ -19,6 +19,12 @@ stdo run -f examples/01-parallel-repo-audit.yaml
 stdo run -f examples/01-parallel-repo-audit.yaml -i target_dir=./examples -i keyword=does-not-match
 ```
 
+To watch the parallel branches finish at different times, delay the file count by three seconds. The summary waits for it while the other scans finish normally.
+
+```sh
+stdo top -f examples/01-parallel-repo-audit.yaml -i delay_seconds=3
+```
+
 ## 02 · Monitored pipe ETL
 
 An inline dataset flows through successive `pipe_from` links. The last step emits JSON with the record count and the first and last sorted values. The workflow renders those fields as text.

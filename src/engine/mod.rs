@@ -136,6 +136,13 @@ async fn run_workflow(
 
     let plan = graph.execution_plan(workflow, no_cache);
     for group in plan.groups {
+        let cancel = telemetry
+            .and_then(|t| t.monitor.as_ref())
+            .map(|monitor| monitor.cancel.clone())
+            .unwrap_or_else(|| watch::channel(false).0);
+        if *cancel.borrow() {
+            return Ok(());
+        }
         let mut layer_timings = BTreeMap::new();
         let mut pipes = BTreeMap::<usize, pipe::Outputs>::new();
         let context = context! { inputs => &inputs, steps => &outputs };
@@ -259,10 +266,12 @@ async fn run_workflow(
             }
         }
 
-        let (cancel, _) = watch::channel(false);
         let mut tasks = JoinSet::new();
         let mut error = None;
         for (layer_number, index, id, command, argv, input, entry) in commands {
+            if *cancel.borrow() {
+                break;
+            }
             let mut outgoing = pipes.remove(&index).unwrap_or_default();
             let mut timing = telemetry.map(|report| report.step(layer_number, index, id));
             if let Some(timer) = &timing {
@@ -358,7 +367,7 @@ async fn run_workflow(
                 }
             };
             if let Some(timer) = &mut timing {
-                timer.spawned();
+                timer.spawned(running.group());
             }
             let budget = budget.clone();
             let mut receiver = cancel.subscribe();
@@ -428,7 +437,7 @@ async fn run_workflow(
                         })?;
                     attempt += 1;
                     if let Some(timer) = &mut timing {
-                        timer.spawned();
+                        timer.spawned(running.group());
                     }
                 };
                 if let Some(entry) = entry {
@@ -469,6 +478,9 @@ async fn run_workflow(
         }
         if let Some(error) = error {
             return Err(error);
+        }
+        if *cancel.borrow() {
+            return Ok(());
         }
     }
 
