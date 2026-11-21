@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1](https://github.com/adiktiv-technologies/stdo/compare/v0.6.0...v0.6.1) - 2026-11-21
+
+### Added
+
+- *(cli)* add native skill generation ([#42](https://github.com/adiktiv-technologies/stdo/pull/42))
+
 ## [0.6.0](https://github.com/adiktiv-technologies/stdo/compare/v0.5.5...v0.6.0) - 2026-11-20
 
 ### Added
