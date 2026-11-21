@@ -311,6 +311,16 @@ Open [Studio](http://127.0.0.1:8080) in your browser. With no file argument, Stu
 - Use **▶ Run** to execute the draft with optional input overrides and cache bypass. Studio streams node states and a bounded stdout preview over SSE, then shows workflow output, timings, cache hits, and the PID ledger on failure. Inline `<audio>` and `<video>` artifact players let you listen to WAV output and watch MP4 output, with download links alongside them.
 - Studio reloads external file edits when the draft is clean and flags conflicts when you have unsaved changes.
 
+### Generate a skill from a CLI
+
+```sh
+stdo skill -o - -- git
+sel=$(stdo skill -l -- gh pr | fzf -m) && printf '%s\n' "$sel" | stdo skill -R -- gh pr
+stdo skill -n -R -- npm publish
+```
+
+Cancelling the picker skips generation. Dry-run exits with code 3 when the generated file would change.
+
 ## CLI Reference
 
 <!-- BEGIN_CLI_REFERENCE -->
@@ -321,6 +331,7 @@ Standard I/O Orchestrator
 Usage: stdo <COMMAND>
 
 Commands:
+  skill   Discover a local CLI and generate a scoped SKILL.md
   run     Execute a workflow DAG
   top     Monitor one DAG pass on stderr, then hold the result until r or q
   bench   Compare the performance of one or more workflows
@@ -331,6 +342,37 @@ Commands:
 Options:
   -h, --help     Print help
   -V, --version  Print version
+```
+
+### `stdo skill`
+
+```text
+Discover a local CLI and generate a scoped SKILL.md
+
+Usage: stdo skill [OPTIONS] [-- <CLI [SUBCOMMAND...]>...]
+
+Arguments:
+  [CLI [SUBCOMMAND...]]...  Target executable followed by optional subcommands
+
+Options:
+      --init <INIT>            Emit shell wrappers for executable commands on PATH [possible values: bash, zsh, fish]
+  -g, --global                 Install in the global skills directory (default)
+  -R, --repo                   Install at the current Git root
+      --repo-dir <DIR>         Resolve the Git root from DIR
+      --subdir <REL_DIR>       Relative skills directory within the repository
+  -o, --output <FILE>          Write to FILE, or use - for stdout
+      --name <SLUG>            Override the generated lowercase skill name
+  -l, --list                   List discovered subcommand paths, one per line
+  -d, --max-depth <MAX_DEPTH>  Maximum depth below the selected command [default: 2]
+  -i, --include <GLOB>         Include matching command paths or flags (repeatable)
+  -x, --exclude <GLOB>         Exclude matching command paths or flags (repeatable)
+  -L, --max-lines <MAX_LINES>  Maximum document lines (default 200, zero is unlimited)
+      --timeout <MS>           Introspection timeout in milliseconds (default 2000)
+  -n, --dry-run                Preview creation or show a unified diff
+  -f, --force                  Replace an unmanaged document without prompting
+  -q, --quiet                  Suppress progress and warnings
+  -v, --verbose                Report introspection diagnostics
+  -h, --help                   Print help
 ```
 
 ### `stdo run`

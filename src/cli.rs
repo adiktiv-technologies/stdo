@@ -43,6 +43,8 @@ impl WorkflowFile {
 #[derive(Subcommand)]
 #[non_exhaustive]
 pub enum Command {
+    /// Discover a local CLI and generate a scoped SKILL.md.
+    Skill(crate::skill::SkillArgs),
     /// Execute a workflow DAG.
     Run {
         #[command(flatten)]

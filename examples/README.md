@@ -127,3 +127,11 @@ stdo run -f examples/11-composable-subworkflows.yaml
 ```
 
 Doctor recursively checks direct `stdo run -f` / `--file` calls and rejects missing files, files outside the workspace, and circular call chains. Studio merges child requirements and provides **Open ↗** links. Child inputs can be supplied with ordinary `-i key=value` arguments or configured visually in the **Sub-Workflows** catalog tab. Child processes have their own memory budgets, caches, telemetry, and PID ledgers; these are not one shared in-process execution graph.
+
+## 12 · Count words
+
+The [word-count workflow](12-count-words.yaml) passes a string from `printf` to `wc -w`. The same YAML is embedded in the generated skill so it works outside the checkout.
+
+```sh
+stdo run -f examples/12-count-words.yaml -i 'message=one two'
+```

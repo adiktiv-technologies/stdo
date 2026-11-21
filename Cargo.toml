@@ -11,6 +11,11 @@ categories = ["command-line-utilities", "development-tools"]
 exclude = ["AGENTS.md", ".github/", ".claude/", "release-plz.toml", "assets/", "benchmarks/"]
 
 [dependencies]
+globset = "0.4"
+similar = "2"
+toml = "1"
+tempfile = "3"
+rustix = { version = "1", features = ["fs", "process"] }
 clap = { version = "4", default-features = false, features = ["derive", "std", "help", "usage", "error-context"] }
 minijinja = { version = "2", default-features = false, features = ["builtins", "serde", "std_collections"] }
 serde = { version = "1", default-features = false, features = ["derive", "std"] }
