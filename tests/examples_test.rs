@@ -16,7 +16,7 @@ const TRIAGE: &str = "examples/08-ollama-local-pr-triage.yaml";
 const HTTP: &str = "examples/09-generic-http-api-pipeline.yaml";
 const CAPSULE: &str = "examples/10-youtube-capsule-generator.yaml";
 const COMPOSABLE: &str = "examples/11-composable-subworkflows.yaml";
-const GALLERY: [&str; 11] = [
+const GALLERY: [&str; 12] = [
     AUDIT,
     ETL,
     GATE,
@@ -28,6 +28,7 @@ const GALLERY: [&str; 11] = [
     HTTP,
     CAPSULE,
     COMPOSABLE,
+    "examples/12-count-words.yaml",
 ];
 
 fn root() -> &'static Path {
@@ -615,7 +616,10 @@ fn composable_gallery_checks_and_runs_both_children() {
         if action == "doctor" {
             assert!(text.contains("3 steps in 2 layers, required executables available"));
         } else {
-            assert!(text.contains("## Repository audit\nYAML files: 11"));
+            assert!(text.contains(&format!(
+                "## Repository audit\nYAML files: {}",
+                GALLERY.len()
+            )));
             assert!(text.contains("## Sensor stream\nALERT: 2 hot readings\nFirst: west at 32 C"));
         }
     }

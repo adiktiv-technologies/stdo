@@ -15,7 +15,10 @@ use stdo::{
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    let command = Cli::parse().command;
+    let command = Cli::parse_from(stdo::skill::argv()).command;
+    if let Command::Skill(args) = command {
+        return stdo::skill::execute(args);
+    }
     let is_run = matches!(command, Command::Run { .. });
     let show_telemetry = matches!(
         command,

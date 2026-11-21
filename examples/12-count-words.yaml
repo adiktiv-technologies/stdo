@@ -1,0 +1,11 @@
+version: "1.0"
+name: count-words
+inputs:
+  message: {type: string, default: "hello local world"}
+steps:
+  - id: emit
+    cmd: [printf, "%s", "{{ inputs.message }}"]
+  - id: count
+    cmd: [wc, -w]
+    pipe_from: emit
+output: "{{ steps.count.stdout | trim }}"
